@@ -62,16 +62,6 @@ openzone-rustaceans/
 └── docs/                # Maintainer and agent documentation
 ```
 
-## 🗺️ Roadmap
-
-- [ ] Define the desktop assistant core architecture
-- [ ] Add AI provider abstraction for model calls
-- [ ] Add local configuration and secret handling
-- [ ] Add desktop context capture with explicit user control
-- [ ] Build first task-assistance workflow
-- [ ] Add native desktop UI/runtime integration
-- [ ] Package cross-platform desktop releases
-
 ## 🤝 Contributing
 
 Contributions are welcome! Please open an issue to discuss what you'd like to change. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
