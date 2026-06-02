@@ -42,6 +42,15 @@ Open an issue and describe:
 - Avoid committing generated build artifacts.
 - Do not commit secrets, API keys, tokens, or private local config.
 
+## Architecture Notes
+
+- The app is currently a single Cargo package, not a workspace of publishable crates.
+- Keep feature logic inside vertical feature modules such as `src/features/onboarding`.
+- Keep reusable internal primitives in `src/shared`.
+- Preserve domain boundaries: contracts in `domain`, reducers/use-case state in `application`, adapters in `infrastructure`, Iced rendering in `presenter`.
+- Do not create standalone crates unless there is a clear external consumer or publishable API.
+- See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Commit Messages
 
 Use clear, conventional messages where possible:
