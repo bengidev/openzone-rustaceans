@@ -19,9 +19,9 @@ OpenZone Rustaceans is an early-stage desktop AI assistant project. It is being 
 
 ## 🚀 Tech Stack
 
-- **Rust 2024** — application core and future desktop/system integration layer
+- **Rust 2024** — application core and desktop/system integration layer
+- **Iced** — current native UI prototype runtime
 - **Cargo** — build, test, and dependency management
-- **Future desktop shell** — planned native desktop UI/runtime integration
 - **Future AI providers** — planned connector layer for cloud and/or local models
 
 ## 📦 Prerequisites
@@ -53,14 +53,19 @@ cargo build --release
 ```text
 openzone-rustaceans/
 ├── src/
-│   └── main.rs          # Current Rust entry point
-├── Cargo.toml           # Package metadata and dependencies
+│   ├── main.rs          # Composition root
+│   ├── features/        # Vertical feature modules
+│   │   └── onboarding/  # Internal first-run onboarding feature
+│   └── shared/          # Shared internal modules, including design tokens
+├── Cargo.toml           # Single package metadata and dependencies
 ├── Cargo.lock           # Locked dependency graph
 ├── ABOUT.md             # Project overview and vision
 ├── CONTRIBUTING.md      # Contribution guidelines
 ├── SECURITY.md          # Security and AI data-handling policy
-└── docs/                # Maintainer and agent documentation
+└── docs/                # Maintainer, architecture, and agent documentation
 ```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for current internal module boundaries.
 
 ## 🤝 Contributing
 

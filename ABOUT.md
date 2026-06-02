@@ -24,7 +24,7 @@ A desktop companion that understands user intent, safely uses local context, int
 
 ## Status
 
-🚧 Early development. The repository currently contains the Rust project foundation. Core architecture, desktop runtime, and AI integrations are planned next. See the [roadmap](README.md#️-roadmap).
+🚧 Early development. The repository currently contains a single Cargo package with internal `onboarding` and `shared` modules, plus an Iced-based first-run onboarding prototype. AI integrations and broader desktop workflows are planned next. See the [roadmap](README.md#️-roadmap) and [architecture notes](docs/ARCHITECTURE.md).
 
 ## Maintainer
 
