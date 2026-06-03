@@ -1,19 +1,19 @@
-//! Onboarding view — implements all 7 visual design sections.
+//! Onboarding view — single-page layout with main-feature highlight cards.
 //!
-//! 1. Identity lock-up (top-left)
-//! 2. Context marker (state code + label)
-//! 3. Primary message (title + body)
-//! 4. Demonstration (galaxy orb, top-center)
-//! 5. Support detail (feature tiles)
-//! 6. Progress (slide indicators)
-//! 7. Actions (primary CTA + secondary skip)
+//! 1. Identity lock-up (top)
+//! 2. Context marker
+//! 3. Primary message + galaxy orb demonstration
+//! 4. Main-feature cards (chat, terminal, text editor, rust)
+//! 5. Actions (enter + skip)
 
 use iced::Element;
+use iced::Font;
 use iced::Length;
 use iced::Theme;
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::canvas::Canvas;
-use iced::widget::{MouseArea, Row, Space, button, column, container, row, text};
+use iced::widget::text::Wrapping;
+use iced::widget::{MouseArea, Row, Space, button, column, container, row, scrollable, text};
 
 use crate::shared::design::OpenZoneTheme;
 use crate::shared::design::tokens::{
@@ -23,34 +23,50 @@ use crate::shared::design::tokens::{
 
 use crate::features::onboarding::application::onboarding_dynamics::dynamics_for_progress;
 use crate::features::onboarding::application::onboarding_messages::OnboardingMessage;
-use crate::features::onboarding::application::onboarding_state::{OnboardingState, SLIDE_COUNT};
+use crate::features::onboarding::application::onboarding_state::{FEATURE_COUNT, OnboardingState};
+use crate::features::onboarding::presenter::feature_card_icon::{FeatureCardIcon, FeatureKind};
 use crate::features::onboarding::presenter::galaxy_orb::GalaxyOrbProgram;
+
+const PAGE_MAX_WIDTH: f32 = 720.0;
+const FEATURE_CARD_WIDTH: f32 = 168.0;
+const FEATURE_CARD_HEIGHT: f32 = 208.0;
+const FEATURE_ICON_HEIGHT: f32 = 78.0;
+const CARD_INNER_WIDTH: f32 = FEATURE_CARD_WIDTH - 22.0;
+const ORB_HEIGHT: f32 = 150.0;
 
 /// Render the onboarding view.
 pub fn view(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
     let theme = state.theme;
 
-    let main = column![
+    let scroll_body = column![
         identity_row(state),
-        Space::new().height(Length::Fixed(SpacingToken::S6.value())),
-        context_marker(state),
         Space::new().height(Length::Fixed(SpacingToken::S5.value())),
+        context_marker(state),
+        Space::new().height(Length::Fixed(SpacingToken::S4.value())),
         hero_block(state),
         Space::new().height(Length::Fixed(SpacingToken::S6.value())),
-        feature_tiles(state),
-        Space::new().height(Length::Fixed(SpacingToken::S7.value())),
-        progress_row(state),
-        Space::new().height(Length::Fixed(SpacingToken::S6.value())),
-        action_row(state),
+        main_feature_cards(state),
     ]
-    .max_width(780)
+    .max_width(PAGE_MAX_WIDTH)
     .spacing(0)
     .width(Length::Fill);
 
-    let centered = container(main)
+    let page = column![
+        scrollable(scroll_body)
+            .width(Length::Fill)
+            .height(Length::Fill),
+        Space::new().height(Length::Fixed(SpacingToken::S5.value())),
+        action_row(state),
+    ]
+    .spacing(0)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .max_width(PAGE_MAX_WIDTH);
+
+    container(page)
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding([SpacingToken::S7.value(), SpacingToken::S7.value()])
+        .padding([SpacingToken::S6.value(), SpacingToken::S7.value()])
         .align_x(Horizontal::Center)
         .align_y(Vertical::Top)
         .style(move |_t: &Theme| container::Style {
@@ -58,14 +74,9 @@ pub fn view(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
                 theme.background(BackgroundToken::Primary),
             )),
             ..Default::default()
-        });
-
-    centered.into()
+        })
+        .into()
 }
-
-// ---------------------------------------------------------------------------
-// 1. Identity lock-up
-// ---------------------------------------------------------------------------
 
 fn identity_row(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
     let theme = state.theme;
@@ -88,7 +99,6 @@ fn identity_row(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
 
     let lhs = row![pip, Space::new().width(Length::Fixed(10.0)), brand].align_y(Vertical::Center);
 
-    // Skip control (top-right).
     let skip = button(text("Skip").size(11).style(move |_t: &Theme| text::Style {
         color: Some(theme.foreground(ForegroundToken::Secondary)),
     }))
@@ -102,32 +112,26 @@ fn identity_row(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
         .into()
 }
 
-// ---------------------------------------------------------------------------
-// 2. Context marker
-// ---------------------------------------------------------------------------
-
 fn context_marker(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
     let theme = state.theme;
 
-    let (code, label) = slide_meta(state.current_slide);
-
     let dot = pip(theme.foreground(ForegroundToken::Accent), 6.0);
 
-    let code_text = text(code).size(10).style(move |_t: &Theme| text::Style {
-        color: Some(theme.foreground(ForegroundToken::Accent)),
-    });
-
-    let label_text = text(label).size(10).style(move |_t: &Theme| text::Style {
-        color: Some(theme.foreground(ForegroundToken::Secondary)),
-    });
-
-    let chip = container(
+    container(
         row![
             dot,
             Space::new().width(Length::Fixed(8.0)),
-            code_text,
+            text("WKSP-00")
+                .size(10)
+                .style(move |_t: &Theme| text::Style {
+                    color: Some(theme.foreground(ForegroundToken::Accent)),
+                }),
             Space::new().width(Length::Fixed(12.0)),
-            label_text,
+            text("command surface")
+                .size(10)
+                .style(move |_t: &Theme| text::Style {
+                    color: Some(theme.foreground(ForegroundToken::Secondary)),
+                }),
         ]
         .align_y(Vertical::Center),
     )
@@ -140,19 +144,13 @@ fn context_marker(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
             color: with_alpha(theme.foreground(ForegroundToken::Accent), 0.32),
         },
         ..Default::default()
-    });
-
-    chip.into()
+    })
+    .into()
 }
-
-// ---------------------------------------------------------------------------
-// 3 + 4. Primary message + demonstration (galaxy orb)
-// ---------------------------------------------------------------------------
 
 fn hero_block(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
     let theme = state.theme;
 
-    // The galaxy orb sits at the top center — preserved centerpiece.
     let orb = Canvas::new(GalaxyOrbProgram::with_dynamics(
         theme,
         state.started_at,
@@ -161,36 +159,39 @@ fn hero_block(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
         state.displayed_zoom,
     ))
     .width(Length::Fill)
-    .height(Length::Fixed(220.0));
+    .height(Length::Fixed(ORB_HEIGHT));
 
     let interactive_orb = MouseArea::new(orb)
         .on_press(OnboardingMessage::OrbPressed)
         .on_release(OnboardingMessage::OrbReleased)
         .interaction(iced::mouse::Interaction::Pointer);
 
-    let orb_container = container(interactive_orb)
-        .width(Length::Fill)
-        .height(Length::Fixed(220.0));
-
     let badge = orb_state_badge(state);
 
-    let (title, body) = slide_copy(state.current_slide);
+    let headline = text("Your local AI command workspace.")
+        .size(30)
+        .style(move |_t: &Theme| text::Style {
+            color: Some(theme.foreground(ForegroundToken::Primary)),
+        });
 
-    let headline = text(title).size(34).style(move |_t: &Theme| text::Style {
-        color: Some(theme.foreground(ForegroundToken::Primary)),
-    });
-
-    let subhead = text(body).size(14).style(move |_t: &Theme| text::Style {
+    let subhead = text(
+        "OpenZone combines chat, terminal, editing, and Rust-native performance \
+         in one permissioned desktop environment.",
+    )
+    .size(13)
+    .style(move |_t: &Theme| text::Style {
         color: Some(theme.foreground(ForegroundToken::Secondary)),
     });
 
     column![
-        orb_container,
-        Space::new().height(Length::Fixed(12.0)),
-        badge,
-        Space::new().height(Length::Fixed(20.0)),
-        headline,
+        container(interactive_orb)
+            .width(Length::Fill)
+            .height(Length::Fixed(ORB_HEIGHT)),
         Space::new().height(Length::Fixed(10.0)),
+        badge,
+        Space::new().height(Length::Fixed(100.0)),
+        headline,
+        Space::new().height(Length::Fixed(8.0)),
         subhead,
     ]
     .spacing(0)
@@ -239,235 +240,261 @@ fn orb_state_badge(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
     .into()
 }
 
-// ---------------------------------------------------------------------------
-// 5. Support detail (feature tiles)
-// ---------------------------------------------------------------------------
-
-fn feature_tiles(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
+fn main_feature_cards(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
     let theme = state.theme;
 
-    let tiles = slide_tiles(state.current_slide);
-
-    let mut row_widget: Row<'_, OnboardingMessage> = Row::new().spacing(10).width(Length::Fill);
-    for (code, title, body) in tiles {
-        row_widget = row_widget.push(feature_tile(theme, code, title, body));
-    }
-    row_widget.into()
-}
-
-fn feature_tile<'a>(
-    theme: OpenZoneTheme,
-    code: &'a str,
-    title: &'a str,
-    body: &'a str,
-) -> Element<'a, OnboardingMessage> {
-    let cell = column![
-        text(code).size(9).style(move |_t: &Theme| text::Style {
-            color: Some(theme.foreground(ForegroundToken::Accent)),
-        }),
-        Space::new().height(Length::Fixed(6.0)),
-        text(title).size(12).style(move |_t: &Theme| text::Style {
-            color: Some(theme.foreground(ForegroundToken::Primary)),
-        }),
-        Space::new().height(Length::Fixed(6.0)),
-        text(body).size(11).style(move |_t: &Theme| text::Style {
-            color: Some(theme.foreground(ForegroundToken::Muted)),
-        }),
-    ]
-    .spacing(0);
-
-    container(cell)
-        .padding(14)
-        .width(Length::FillPortion(1))
-        .style(move |_t: &Theme| container::Style {
-            background: Some(iced::Background::Color(
-                theme.background(BackgroundToken::Secondary),
-            )),
-            border: iced::Border {
-                radius: RadiusToken::Sm.value().into(),
-                width: 1.0,
-                color: theme.border(BorderToken::Default),
-            },
-            ..Default::default()
-        })
-        .into()
-}
-
-// ---------------------------------------------------------------------------
-// 6. Progress indicators
-// ---------------------------------------------------------------------------
-
-fn progress_row(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
-    let theme = state.theme;
-
-    let mut dots: Row<'_, OnboardingMessage> = Row::new().spacing(6);
-    for i in 0..SLIDE_COUNT {
-        let is_current = i == state.current_slide;
-        let color = if is_current {
-            theme.foreground(ForegroundToken::Accent)
-        } else {
-            theme.foreground(ForegroundToken::Muted)
-        };
-        let (w, h) = if is_current { (20.0, 6.0) } else { (6.0, 6.0) };
-        let dot = container(Space::new())
-            .width(Length::Fixed(w))
-            .height(Length::Fixed(h))
-            .style(move |_t: &Theme| container::Style {
-                background: Some(iced::Background::Color(color)),
-                border: iced::Border {
-                    radius: (h * 0.5).into(),
-                    width: 0.0,
-                    color: iced::Color::TRANSPARENT,
-                },
-                ..Default::default()
-            });
-        dots = dots.push(dot);
-    }
-
-    let counter = text(format!(
-        "{:02} / {:02}",
-        state.current_slide + 1,
-        SLIDE_COUNT
-    ))
-    .size(10)
-    .style(move |_t: &Theme| text::Style {
-        color: Some(theme.foreground(ForegroundToken::Muted)),
-    });
-
-    row![
-        dots,
-        Space::new().width(Length::Fixed(16.0)),
-        counter,
+    let section_label = row![
+        text("MAIN FEATURES")
+            .size(9)
+            .style(move |_t: &Theme| text::Style {
+                color: Some(theme.foreground(ForegroundToken::Muted)),
+            }),
         Space::new().width(Length::Fill),
+        text(format!("{:02} MODULES", FEATURE_COUNT))
+            .size(9)
+            .style(move |_t: &Theme| text::Style {
+                color: Some(theme.foreground(ForegroundToken::Muted)),
+            }),
     ]
     .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+    let mut cards: Row<'_, OnboardingMessage> = Row::new().spacing(8).width(Length::Shrink);
+    for index in 0..FEATURE_COUNT {
+        cards = cards.push(feature_card(state, index));
+    }
+
+    let cards_row = row![
+        Space::new().width(Length::Fill),
+        cards,
+        Space::new().width(Length::Fill),
+    ]
+    .width(Length::Fill);
+
+    column![
+        section_label,
+        Space::new().height(Length::Fixed(8.0)),
+        cards_row,
+    ]
+    .spacing(0)
+    .width(Length::Fill)
     .into()
 }
 
-// ---------------------------------------------------------------------------
-// 7. Action row
-// ---------------------------------------------------------------------------
+fn feature_card(state: &OnboardingState, index: usize) -> Element<'_, OnboardingMessage> {
+    let (code, title, body, kind) = feature_meta(index);
+    let theme = state.theme;
+    let active = state.selected_feature == index;
+    let glow = state.feature_glow[index];
+
+    let accent = theme.foreground(ForegroundToken::Accent);
+    let muted = theme.foreground(ForegroundToken::Muted);
+    let primary = theme.foreground(ForegroundToken::Primary);
+    let secondary = theme.foreground(ForegroundToken::Secondary);
+
+    let index_tag = container(text(code).size(9).style(move |_t: &Theme| text::Style {
+        color: Some(if active {
+            theme.action(ActionToken::StrongText)
+        } else {
+            secondary
+        }),
+    }))
+    .padding([4, 6])
+    .style(move |_t: &Theme| container::Style {
+        background: Some(iced::Background::Color(if active {
+            accent
+        } else {
+            theme.background(BackgroundToken::Tertiary)
+        })),
+        border: iced::Border {
+            radius: RadiusToken::Xs.value().into(),
+            width: 1.0,
+            color: if active {
+                accent
+            } else {
+                theme.border(BorderToken::Default)
+            },
+        },
+        ..Default::default()
+    });
+
+    let icon = Canvas::new(FeatureCardIcon::new(
+        kind,
+        glow,
+        state.now,
+        state.started_at,
+        theme,
+    ))
+    .width(Length::Fill)
+    .height(Length::Fixed(FEATURE_ICON_HEIGHT));
+
+    let title_text = text(title).size(11).style(move |_t: &Theme| text::Style {
+        color: Some(if active { primary } else { secondary }),
+    });
+
+    let body_text = text(body)
+        .size(9)
+        .line_height(iced::widget::text::LineHeight::Relative(1.35))
+        .width(Length::Fixed(CARD_INNER_WIDTH))
+        .wrapping(Wrapping::Word)
+        .style(move |_t: &Theme| text::Style {
+            color: Some(if active { secondary } else { muted }),
+        });
+
+    let footer = if active {
+        row![
+            container(Space::new())
+                .width(Length::Fixed(8.0))
+                .height(Length::Fixed(8.0))
+                .style(move |_t: &Theme| container::Style {
+                    background: Some(iced::Background::Color(accent)),
+                    border: iced::Border {
+                        radius: RadiusToken::Xs.value().into(),
+                        width: 0.0,
+                        color: iced::Color::TRANSPARENT,
+                    },
+                    ..Default::default()
+                }),
+            Space::new().width(Length::Fixed(5.0)),
+            text("SELECTED")
+                .size(9)
+                .style(move |_t: &Theme| text::Style {
+                    color: Some(accent),
+                }),
+        ]
+        .align_y(Vertical::Center)
+    } else {
+        row![
+            text("+")
+                .size(11)
+                .style(move |_t: &Theme| text::Style { color: Some(muted) }),
+        ]
+        .align_y(Vertical::Center)
+    };
+
+    let accent_wash = container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fixed(2.0 + glow * 2.0))
+        .style(move |_t: &Theme| container::Style {
+            background: Some(iced::Background::Color(with_alpha(
+                accent,
+                0.12 + glow * 0.28,
+            ))),
+            ..Default::default()
+        });
+
+    let card_body = column![
+        index_tag,
+        Space::new().height(Length::Fixed(8.0)),
+        icon,
+        Space::new().height(Length::Fixed(10.0)),
+        title_text,
+        Space::new().height(Length::Fixed(4.0)),
+        body_text,
+        Space::new().height(Length::Fill),
+        footer,
+        Space::new().height(Length::Fixed(5.0)),
+        accent_wash,
+    ]
+    .spacing(0)
+    .height(Length::Fill);
+
+    let card = button(
+        container(card_body)
+            .padding([11, 11])
+            .width(Length::Fixed(FEATURE_CARD_WIDTH))
+            .height(Length::Fixed(FEATURE_CARD_HEIGHT))
+            .style(move |_t: &Theme| container::Style {
+                background: Some(iced::Background::Color(blend_surface(
+                    theme.background(BackgroundToken::Secondary),
+                    theme.background(BackgroundToken::GalaxyTint),
+                    glow,
+                ))),
+                border: iced::Border {
+                    radius: RadiusToken::Sm.value().into(),
+                    width: if active { 1.5 } else { 1.0 + glow * 0.35 },
+                    color: with_alpha(
+                        if active {
+                            accent
+                        } else {
+                            theme.border(BorderToken::Default)
+                        },
+                        0.45 + glow * 0.55,
+                    ),
+                },
+                ..Default::default()
+            }),
+    )
+    .width(Length::Fixed(FEATURE_CARD_WIDTH))
+    .padding(0)
+    .on_press(OnboardingMessage::FeatureSelected(index))
+    .style(move |_t: &Theme, status| feature_card_button_style(theme, active, glow, status));
+
+    MouseArea::new(card)
+        .on_enter(OnboardingMessage::FeatureHovered(Some(index)))
+        .on_exit(OnboardingMessage::FeatureHovered(None))
+        .interaction(iced::mouse::Interaction::Pointer)
+        .into()
+}
 
 fn action_row(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
     let theme = state.theme;
-    let is_final = state.is_final_slide();
-
-    let primary_label = if is_final {
-        "Enter OpenZone"
-    } else {
-        "Continue"
-    };
 
     let primary = button(
-        row![text(primary_label).size(13).style(move |_t: &Theme| {
-            text::Style {
-                color: Some(theme.action(ActionToken::StrongText)),
-            }
-        }),]
+        row![
+            text("Enter OpenZone")
+                .size(13)
+                .font(Font {
+                    weight: iced::font::Weight::Bold,
+                    ..Font::DEFAULT
+                })
+                .style(move |_t: &Theme| {
+                    text::Style {
+                        color: Some(theme.action(ActionToken::StrongText)),
+                    }
+                }),
+        ]
         .align_y(Vertical::Center),
     )
     .padding([14, 28])
     .on_press(OnboardingMessage::EnterPressed)
     .style(move |_t: &Theme, status| primary_action_style(theme, status));
 
-    let back_label = if state.current_slide > 0 {
-        Some("Back")
-    } else {
-        None
-    };
-
-    let mut row_widget: Row<'_, OnboardingMessage> =
-        Row::new().spacing(10).align_y(Vertical::Center);
-
-    if let Some(label) = back_label {
-        let back = button(text(label).size(12).style(move |_t: &Theme| text::Style {
-            color: Some(theme.foreground(ForegroundToken::Secondary)),
-        }))
-        .padding([10, 16])
-        .on_press(OnboardingMessage::PreviousSlide)
-        .style(move |_t: &Theme, status| chip_style(theme, status));
-        row_widget = row_widget.push(back);
-    }
-
-    row_widget = row_widget.push(Space::new().width(Length::Fill));
-    row_widget = row_widget.push(primary);
-
-    row_widget.into()
+    row![Space::new().width(Length::Fill), primary,]
+        .align_y(Vertical::Center)
+        .width(Length::Fill)
+        .into()
 }
 
-// ---------------------------------------------------------------------------
-// Slide content
-// ---------------------------------------------------------------------------
-
-fn slide_meta(slide: usize) -> (&'static str, &'static str) {
-    match slide {
-        0 => ("SEC-01", "encrypted pairing"),
-        1 => ("AI-02", "model workspace"),
-        2 => ("RUN-03", "queue control"),
-        3 => ("THK-04", "reasoning dial"),
-        _ => ("—", "—"),
-    }
-}
-
-fn slide_copy(slide: usize) -> (&'static str, &'static str) {
-    match slide {
+fn feature_meta(index: usize) -> (&'static str, &'static str, &'static str, FeatureKind) {
+    match index {
         0 => (
-            "Pair trusted devices and keep chat context local.",
-            "OpenZone encrypts your session context on-device. \
-             Approve paired machines, audit what is sent to models, \
-             and revoke access at any time.",
+            "01.0",
+            "Chat",
+            "Ask local models with context kept on your machine.",
+            FeatureKind::Chat,
         ),
         1 => (
-            "Steer models across providers from one workspace.",
-            "Route prompts to the provider that fits the task. \
-             Sessions stay local, secrets stay in your keychain, \
-             and every response is reviewable.",
+            "02.0",
+            "Terminal",
+            "Run shell commands with permissioned workspace access.",
+            FeatureKind::Terminal,
         ),
         2 => (
-            "Queue the next prompt while the current turn runs.",
-            "Long-running tasks, multi-step work, and agent loops \
-             queue behind the active turn. Cancel, reorder, or \
-             inspect any queued item before it ships.",
+            "03.0",
+            "Text Editor",
+            "Review agent edits before anything writes to disk.",
+            FeatureKind::TextEditor,
         ),
         3 => (
-            "Set thinking before the model commits compute.",
-            "Dial reasoning effort up for architecture and down for \
-             quick lookups. Reviewable automation — you approve \
-             before the agent writes to disk.",
+            "04.0",
+            "Rust",
+            "Native speed and memory safety for the whole workspace.",
+            FeatureKind::Rust,
         ),
-        _ => ("", ""),
+        _ => ("—", "—", "—", FeatureKind::Chat),
     }
 }
-
-fn slide_tiles(slide: usize) -> [(&'static str, &'static str, &'static str); 3] {
-    match slide {
-        0 => [
-            ("// 01", "LOCAL", "Context stays on your machine."),
-            ("// 02", "PAIRED", "Approve trusted devices."),
-            ("// 03", "AUDITABLE", "Inspect every model call."),
-        ],
-        1 => [
-            ("// 01", "ROUTED", "Providers picked per task."),
-            ("// 02", "KEYCHAIN", "Secrets never leave the device."),
-            ("// 03", "REVIEWABLE", "Every response, every prompt."),
-        ],
-        2 => [
-            ("// 01", "QUEUED", "Tasks wait their turn."),
-            ("// 02", "CANCELLABLE", "Kill any queued item."),
-            ("// 03", "REPLAYABLE", "Rerun with full audit."),
-        ],
-        3 => [
-            ("// 01", "DIALED", "Thinking effort, your call."),
-            ("// 02", "GATED", "Approval before writes."),
-            ("// 03", "REVERSIBLE", "Undo agent actions."),
-        ],
-        _ => [("", "", ""); 3],
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Style helpers
-// ---------------------------------------------------------------------------
 
 fn pip(color: iced::Color, diameter: f32) -> Element<'static, OnboardingMessage> {
     container(Space::new())
@@ -485,9 +512,6 @@ fn pip(color: iced::Color, diameter: f32) -> Element<'static, OnboardingMessage>
         .into()
 }
 
-/// Graphite/near-black primary action per design spec: "Graphite for
-/// commitment — primary actions use near-black when the action means
-/// continue, enter, run, approve, or commit."
 fn primary_action_style(theme: OpenZoneTheme, status: button::Status) -> button::Style {
     let base = button::Style {
         background: Some(iced::Background::Color(theme.action(ActionToken::Strong))),
@@ -548,6 +572,55 @@ fn chip_style(theme: OpenZoneTheme, status: button::Status) -> button::Style {
             ..base
         },
         _ => base,
+    }
+}
+
+fn feature_card_button_style(
+    theme: OpenZoneTheme,
+    active: bool,
+    glow: f32,
+    status: button::Status,
+) -> button::Style {
+    let accent = theme.foreground(ForegroundToken::Accent);
+    let base = button::Style {
+        background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+        text_color: theme.foreground(ForegroundToken::Primary),
+        border: iced::Border {
+            radius: RadiusToken::Sm.value().into(),
+            width: 0.0,
+            color: iced::Color::TRANSPARENT,
+        },
+        ..Default::default()
+    };
+
+    match status {
+        button::Status::Hovered if !active => button::Style {
+            background: Some(iced::Background::Color(with_alpha(
+                accent,
+                0.05 + glow * 0.03,
+            ))),
+            border: iced::Border {
+                radius: RadiusToken::Sm.value().into(),
+                width: 1.0,
+                color: with_alpha(accent, 0.28 + glow * 0.2),
+            },
+            ..base
+        },
+        button::Status::Pressed => button::Style {
+            background: Some(iced::Background::Color(with_alpha(accent, 0.10))),
+            ..base
+        },
+        _ => base,
+    }
+}
+
+fn blend_surface(from: iced::Color, to: iced::Color, amount: f32) -> iced::Color {
+    let amount = amount.clamp(0.0, 1.0);
+    iced::Color {
+        r: from.r + (to.r - from.r) * amount,
+        g: from.g + (to.g - from.g) * amount,
+        b: from.b + (to.b - from.b) * amount,
+        a: from.a + (to.a - from.a) * amount,
     }
 }
 
