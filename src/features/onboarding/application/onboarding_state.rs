@@ -1,6 +1,7 @@
 //! Onboarding state reducer.
 //!
-//! Multi-slide navigation with hold-to-zoom orb interaction.
+//! Single-page onboarding with hold-to-zoom orb interaction and
+//! selectable main-feature highlight cards.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,14 +10,17 @@ use iced::Subscription;
 
 use crate::shared::design::{OpenZoneTheme, ThemeMode};
 
+use crate::features::onboarding::application::feature_card_dynamics::{
+    approach, highlight_target,
+};
 use crate::features::onboarding::application::onboarding_dynamics::dynamics_for_progress;
 use crate::features::onboarding::application::onboarding_messages::OnboardingMessage;
 use crate::features::onboarding::domain::{
     OnboardingOutcome, OnboardingPersistence, OnboardingPersistenceError,
 };
 
-/// Total number of onboarding slides.
-pub const SLIDE_COUNT: usize = 4;
+/// Number of main-feature highlight cards on the onboarding page.
+pub const FEATURE_COUNT: usize = 4;
 
 pub struct OnboardingState {
     pub theme: OpenZoneTheme,
@@ -24,7 +28,9 @@ pub struct OnboardingState {
     pub started_at: Instant,
     pub now: Instant,
     pub persistence: Arc<dyn OnboardingPersistence>,
-    pub current_slide: usize,
+    pub selected_feature: usize,
+    pub hovered_feature: Option<usize>,
+    pub feature_glow: [f32; FEATURE_COUNT],
     pub is_holding: bool,
     pub hold_progress: f32,
     pub displayed_speed: f32,
@@ -35,7 +41,8 @@ impl std::fmt::Debug for OnboardingState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OnboardingState")
             .field("theme_mode", &self.theme_mode)
-            .field("current_slide", &self.current_slide)
+            .field("selected_feature", &self.selected_feature)
+            .field("hovered_feature", &self.hovered_feature)
             .field("is_holding", &self.is_holding)
             .field("hold_progress", &self.hold_progress)
             .finish()
@@ -52,7 +59,9 @@ impl OnboardingState {
             started_at: now,
             now,
             persistence,
-            current_slide: 0,
+            selected_feature: 0,
+            hovered_feature: None,
+            feature_glow: [0.0; FEATURE_COUNT],
             is_holding: false,
             hold_progress: 0.0,
             displayed_speed: initial_speed,
@@ -66,6 +75,7 @@ impl OnboardingState {
                 let dt = now.saturating_duration_since(self.now).as_secs_f32();
                 self.now = now;
                 self.advance_orb_progress(dt);
+                self.advance_feature_glow(dt);
                 OnboardingOutcome::None
             }
             OnboardingMessage::ToggleTheme => {
@@ -81,26 +91,17 @@ impl OnboardingState {
                 self.is_holding = false;
                 OnboardingOutcome::None
             }
-            OnboardingMessage::NextSlide => {
-                if self.current_slide < SLIDE_COUNT - 1 {
-                    self.current_slide += 1;
+            OnboardingMessage::FeatureSelected(index) => {
+                if index < FEATURE_COUNT {
+                    self.selected_feature = index;
                 }
                 OnboardingOutcome::None
             }
-            OnboardingMessage::PreviousSlide => {
-                if self.current_slide > 0 {
-                    self.current_slide -= 1;
-                }
+            OnboardingMessage::FeatureHovered(index) => {
+                self.hovered_feature = index.filter(|i| *i < FEATURE_COUNT);
                 OnboardingOutcome::None
             }
-            OnboardingMessage::EnterPressed => {
-                if self.current_slide == SLIDE_COUNT - 1 {
-                    OnboardingOutcome::Completed
-                } else {
-                    self.current_slide += 1;
-                    OnboardingOutcome::None
-                }
-            }
+            OnboardingMessage::EnterPressed => OnboardingOutcome::Completed,
             OnboardingMessage::Skipped => OnboardingOutcome::Skipped,
         }
     }
@@ -122,12 +123,17 @@ impl OnboardingState {
         self.displayed_zoom = zoom;
     }
 
-    pub fn subscription(&self) -> Subscription<OnboardingMessage> {
-        iced::time::every(Duration::from_millis(33)).map(OnboardingMessage::Tick)
+    fn advance_feature_glow(&mut self, dt: f32) {
+        for index in 0..FEATURE_COUNT {
+            let hovered = self.hovered_feature == Some(index);
+            let selected = self.selected_feature == index;
+            let target = highlight_target(selected, hovered);
+            self.feature_glow[index] = approach(self.feature_glow[index], target, dt, 9.0);
+        }
     }
 
-    pub fn is_final_slide(&self) -> bool {
-        self.current_slide == SLIDE_COUNT - 1
+    pub fn subscription(&self) -> Subscription<OnboardingMessage> {
+        iced::time::every(Duration::from_millis(33)).map(OnboardingMessage::Tick)
     }
 }
 
@@ -143,47 +149,33 @@ mod tests {
     use crate::features::onboarding::infrastructure::InMemoryOnboardingPersistence;
 
     #[test]
-    fn enter_on_final_slide_yields_completed() {
+    fn enter_yields_completed() {
         let mut state = OnboardingState::new(
             Arc::new(InMemoryOnboardingPersistence::new()),
             ThemeMode::Dark,
         );
-        state.current_slide = SLIDE_COUNT - 1;
         let outcome = state.update(OnboardingMessage::EnterPressed);
         assert_eq!(outcome, OnboardingOutcome::Completed);
     }
 
     #[test]
-    fn enter_advances_slide_before_final() {
+    fn feature_selection_updates_index() {
         let mut state = OnboardingState::new(
             Arc::new(InMemoryOnboardingPersistence::new()),
             ThemeMode::Dark,
         );
-        assert_eq!(state.current_slide, 0);
-        let outcome = state.update(OnboardingMessage::EnterPressed);
-        assert_eq!(outcome, OnboardingOutcome::None);
-        assert_eq!(state.current_slide, 1);
+        assert_eq!(state.selected_feature, 0);
+        state.update(OnboardingMessage::FeatureSelected(2));
+        assert_eq!(state.selected_feature, 2);
     }
 
     #[test]
-    fn next_slide_clamps_at_end() {
+    fn feature_selection_clamps_to_valid_range() {
         let mut state = OnboardingState::new(
             Arc::new(InMemoryOnboardingPersistence::new()),
             ThemeMode::Dark,
         );
-        state.current_slide = SLIDE_COUNT - 1;
-        state.update(OnboardingMessage::NextSlide);
-        assert_eq!(state.current_slide, SLIDE_COUNT - 1);
-    }
-
-    #[test]
-    fn previous_slide_clamps_at_start() {
-        let mut state = OnboardingState::new(
-            Arc::new(InMemoryOnboardingPersistence::new()),
-            ThemeMode::Dark,
-        );
-        assert_eq!(state.current_slide, 0);
-        state.update(OnboardingMessage::PreviousSlide);
-        assert_eq!(state.current_slide, 0);
+        state.update(OnboardingMessage::FeatureSelected(99));
+        assert_eq!(state.selected_feature, 0);
     }
 }
