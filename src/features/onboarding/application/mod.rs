@@ -1,5 +1,6 @@
 //! Application layer — state reducer and orb dynamics.
 
+pub mod feature_card_dynamics;
 pub mod onboarding_dynamics;
 pub mod onboarding_messages;
 pub mod onboarding_state;
