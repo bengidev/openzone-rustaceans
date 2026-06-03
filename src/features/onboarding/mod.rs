@@ -43,6 +43,7 @@ pub fn run(
     .title(OnboardingApp::title)
     .subscription(OnboardingApp::subscription)
     .theme(OnboardingApp::theme)
+    .window_size(iced::Size::new(840.0, 820.0))
     .run()
 }
 
