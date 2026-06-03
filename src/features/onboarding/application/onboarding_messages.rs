@@ -8,8 +8,8 @@ pub enum OnboardingMessage {
     ToggleTheme,
     OrbPressed,
     OrbReleased,
-    NextSlide,
-    PreviousSlide,
+    FeatureSelected(usize),
+    FeatureHovered(Option<usize>),
     EnterPressed,
     Skipped,
 }
