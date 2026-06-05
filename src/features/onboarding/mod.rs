@@ -43,7 +43,7 @@ pub fn run(
     .title(OnboardingApp::title)
     .subscription(OnboardingApp::subscription)
     .theme(OnboardingApp::theme)
-    .window_size(iced::Size::new(1120.0, 860.0))
+    .window_size(iced::Size::new(960.0, 680.0))
     .run()
 }
 
@@ -82,8 +82,8 @@ impl OnboardingApp {
 
     fn theme(&self) -> Theme {
         match self.state.theme_mode {
-            crate::shared::design::ThemeMode::Dark => Theme::TokyoNight,
-            crate::shared::design::ThemeMode::Light => Theme::CatppuccinLatte,
+            crate::shared::design::ThemeMode::Dark => Theme::Dark,
+            crate::shared::design::ThemeMode::Light => Theme::Light,
         }
     }
 }
