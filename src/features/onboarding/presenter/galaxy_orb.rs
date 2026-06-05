@@ -1,19 +1,8 @@
-//! Galaxy orb canvas — the preserved centerpiece.
+//! Galaxy orb canvas — monochrome spiral centerpiece.
 //!
-//! Renders a realistic pixel-particle spiral galaxy. Each stellar
-//! population uses physically-motivated colours:
-//!
-//! - **Spiral arms**: blue-white (hot O/B stars, young population I)
-//! - **Inter-arm disc**: warm golden (intermediate-age stars)
-//! - **Bulge**: warm yellow → gold (old population II)
-//! - **Nucleus**: white-hot (AGN core)
-//! - **HII regions**: pink-magenta (hydrogen-alpha emission)
-//! - **Dust lanes**: dark reddish-brown (interstellar absorption)
-//! - **Halo**: cool blue-white (old, metal-poor stars)
-//! - **Jets**: pale cyan (synchrotron radiation)
-//!
-//! The spiral structure, differential rotation, and hold-to-zoom
-//! dynamics are preserved exactly.
+//! Renders a pixel-particle spiral galaxy using grayscale stellar
+//! populations. Inner nucleus glows bright; outer arms fade to muted
+//! graphite. Hold-to-zoom dynamics are preserved.
 
 use std::time::Instant;
 
@@ -27,16 +16,16 @@ use iced::mouse;
 use iced::widget::canvas::{Frame, Geometry, Program};
 
 use crate::shared::design::OpenZoneTheme;
-use crate::shared::design::tokens::ForegroundToken;
+use crate::shared::design::ThemeMode;
 
 use crate::features::onboarding::application::onboarding_dynamics::{MAX_ZOOM, SPEED_CLAMP};
 
 const LOGICAL_SIZE: Size = Size {
-    width: 420.0,
-    height: 260.0,
+    width: 520.0,
+    height: 340.0,
 };
 
-const DISC_RADIUS: f32 = 116.0;
+const DISC_RADIUS: f32 = 148.0;
 const DISC_TILT: f32 = 0.40;
 const ARM_COUNT: usize = 2;
 const ARM_PITCH: f32 = 0.42;
@@ -53,13 +42,7 @@ const JET_SEGMENTS: usize = 16;
 
 const SNAP_GRID: f32 = 3.0;
 
-/// Galaxy palette with two accent zones:
-///
-/// - **Outer ring** → blue galaxy accent (from design theme)
-/// - **Center orb** → sun accent (warm golden-orange)
-///
-/// Each layer blends its base colour toward the appropriate accent
-/// based on radial distance from the nucleus.
+/// Grayscale galaxy palette — inner core bright, outer disc muted.
 struct GalaxyPalette {
     arm_young: Color,
     arm_old: Color,
@@ -70,39 +53,47 @@ struct GalaxyPalette {
     halo: Color,
     jet: Color,
     starfield: Color,
-    /// Blue galaxy accent from the design theme — used for outer ring.
-    blue_galaxy: Color,
-    /// Warm sun accent — used for center orb (bulge, nucleus, jets).
-    sun: Color,
+    core: Color,
+    rim: Color,
 }
 
 impl GalaxyPalette {
     fn from_theme(theme: &OpenZoneTheme) -> Self {
-        let blue_galaxy = theme.foreground(ForegroundToken::Accent);
-        Self {
-            arm_young: Color::from_rgb(0.70, 0.80, 1.0),
-            arm_old: Color::from_rgb(1.0, 0.85, 0.55),
-            bulge: Color::from_rgb(1.0, 0.78, 0.45),
-            nucleus: Color::from_rgb(1.0, 1.0, 0.95),
-            hii_region: Color::from_rgb(1.0, 0.55, 0.70),
-            dust: Color::from_rgb(0.25, 0.18, 0.15),
-            halo: Color::from_rgb(0.60, 0.70, 0.95),
-            jet: Color::from_rgb(0.50, 0.85, 0.95),
-            starfield: Color::from_rgb(0.95, 0.95, 1.0),
-            blue_galaxy,
-            sun: Color::from_rgb(1.0, 0.72, 0.22),
+        match theme.mode {
+            ThemeMode::Dark => Self {
+                arm_young: Color::from_rgb(0.94, 0.94, 0.94),
+                arm_old: Color::from_rgb(0.68, 0.68, 0.68),
+                bulge: Color::from_rgb(0.88, 0.88, 0.88),
+                nucleus: Color::from_rgb(1.0, 1.0, 1.0),
+                hii_region: Color::from_rgb(0.78, 0.78, 0.78),
+                dust: Color::from_rgb(0.22, 0.22, 0.22),
+                halo: Color::from_rgb(0.52, 0.52, 0.52),
+                jet: Color::from_rgb(0.82, 0.82, 0.82),
+                starfield: Color::from_rgb(0.90, 0.90, 0.90),
+                core: Color::from_rgb(1.0, 1.0, 1.0),
+                rim: Color::from_rgb(0.42, 0.42, 0.42),
+            },
+            ThemeMode::Light => Self {
+                arm_young: Color::from_rgb(0.12, 0.12, 0.12),
+                arm_old: Color::from_rgb(0.38, 0.38, 0.38),
+                bulge: Color::from_rgb(0.18, 0.18, 0.18),
+                nucleus: Color::from_rgb(0.04, 0.04, 0.04),
+                hii_region: Color::from_rgb(0.28, 0.28, 0.28),
+                dust: Color::from_rgb(0.78, 0.78, 0.78),
+                halo: Color::from_rgb(0.48, 0.48, 0.48),
+                jet: Color::from_rgb(0.22, 0.22, 0.22),
+                starfield: Color::from_rgb(0.10, 0.10, 0.10),
+                core: Color::from_rgb(0.02, 0.02, 0.02),
+                rim: Color::from_rgb(0.58, 0.58, 0.58),
+            },
         }
     }
 
-    /// Radial tint: blends a base colour toward the appropriate accent.
-    ///
-    /// `r` is normalised radius in `[0, 1]` (0 = center, 1 = edge).
-    /// Inner regions tint toward sun; outer regions tint toward blue galaxy.
+    /// Radial tint: blends a base colour toward core (inner) or rim (outer).
     fn radial_tint(&self, base: Color, r: f32, strength: f32) -> Color {
         let r = r.clamp(0.0, 1.0);
-        // Transition zone: 0.0–0.3 is pure sun, 0.3–0.7 blends, 0.7–1.0 is pure blue
-        let blue_weight = ((r - 0.3) / 0.4).clamp(0.0, 1.0);
-        let accent = blend(self.sun, self.blue_galaxy, blue_weight);
+        let rim_weight = ((r - 0.3) / 0.4).clamp(0.0, 1.0);
+        let accent = blend(self.core, self.rim, rim_weight);
         blend(base, accent, strength)
     }
 }
@@ -180,7 +171,7 @@ impl<Message> Program<Message> for GalaxyOrbProgram {
         draw_arm_satellites(&mut frame, &pal, t, scale, project);
         draw_bulge(&mut frame, &pal, t, scale, project);
         draw_nucleus(&mut frame, &pal, t, scale, project);
-        draw_scanline(&mut frame, &self.theme, t, scale, project);
+        draw_scanline(&mut frame, &pal, t, scale, project);
 
         vec![frame.into_geometry()]
     }
@@ -764,12 +755,12 @@ fn draw_nucleus(
 
 fn draw_scanline(
     frame: &mut Frame,
-    theme: &OpenZoneTheme,
+    pal: &GalaxyPalette,
     t: f32,
     scale: f32,
     project: impl Fn(Point) -> Point,
 ) {
-    let accent = theme.foreground(ForegroundToken::Accent);
+    let accent = pal.core;
 
     let cycle = 8.0;
     let phase = ((t / cycle) - (t / cycle).floor()).clamp(0.0, 1.0);
