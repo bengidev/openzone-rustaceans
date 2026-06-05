@@ -46,7 +46,7 @@ pub enum BorderToken {
 /// Status / semantic tokens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusToken {
-    /// Informational — cool secondary blue.
+    /// Informational — secondary emphasis.
     Info,
     /// Success, verified, connected.
     Success,
@@ -59,7 +59,7 @@ pub enum StatusToken {
 /// Accent depth tokens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccentToken {
-    /// Default blue galaxy accent.
+    /// Default live accent.
     Primary,
     /// Pressed / strong emphasis.
     Deep,
