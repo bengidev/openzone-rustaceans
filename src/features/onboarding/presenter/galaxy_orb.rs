@@ -32,8 +32,8 @@ use crate::shared::design::tokens::ForegroundToken;
 use crate::features::onboarding::application::onboarding_dynamics::{MAX_ZOOM, SPEED_CLAMP};
 
 const LOGICAL_SIZE: Size = Size {
-    width: 360.0,
-    height: 240.0,
+    width: 420.0,
+    height: 260.0,
 };
 
 const DISC_RADIUS: f32 = 116.0;
