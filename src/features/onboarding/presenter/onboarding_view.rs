@@ -27,12 +27,13 @@ use crate::features::onboarding::application::onboarding_state::{FEATURE_COUNT, 
 use crate::features::onboarding::presenter::feature_card_icon::{FeatureCardIcon, FeatureKind};
 use crate::features::onboarding::presenter::galaxy_orb::GalaxyOrbProgram;
 
-const PAGE_MAX_WIDTH: f32 = 720.0;
-const FEATURE_CARD_WIDTH: f32 = 168.0;
-const FEATURE_CARD_HEIGHT: f32 = 208.0;
-const FEATURE_ICON_HEIGHT: f32 = 78.0;
+const PAGE_MAX_WIDTH: f32 = 960.0;
+const FEATURE_CARD_WIDTH: f32 = 200.0;
+const FEATURE_CARD_HEIGHT: f32 = 224.0;
+const FEATURE_ICON_HEIGHT: f32 = 88.0;
+const FEATURE_CARD_GAP: f32 = 12.0;
 const CARD_INNER_WIDTH: f32 = FEATURE_CARD_WIDTH - 22.0;
-const ORB_HEIGHT: f32 = 150.0;
+const ORB_HEIGHT: f32 = 200.0;
 
 /// Render the onboarding view.
 pub fn view(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
@@ -169,7 +170,7 @@ fn hero_block(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
     let badge = orb_state_badge(state);
 
     let headline = text("Your local AI command workspace.")
-        .size(30)
+        .size(32)
         .style(move |_t: &Theme| text::Style {
             color: Some(theme.foreground(ForegroundToken::Primary)),
         });
@@ -178,7 +179,7 @@ fn hero_block(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
         "OpenZone combines chat, terminal, editing, and Rust-native performance \
          in one permissioned desktop environment.",
     )
-    .size(13)
+    .size(14)
     .style(move |_t: &Theme| text::Style {
         color: Some(theme.foreground(ForegroundToken::Secondary)),
     });
@@ -189,7 +190,7 @@ fn hero_block(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
             .height(Length::Fixed(ORB_HEIGHT)),
         Space::new().height(Length::Fixed(10.0)),
         badge,
-        Space::new().height(Length::Fixed(100.0)),
+        Space::new().height(Length::Fixed(48.0)),
         headline,
         Space::new().height(Length::Fixed(8.0)),
         subhead,
@@ -259,7 +260,8 @@ fn main_feature_cards(state: &OnboardingState) -> Element<'_, OnboardingMessage>
     .align_y(Vertical::Center)
     .width(Length::Fill);
 
-    let mut cards: Row<'_, OnboardingMessage> = Row::new().spacing(8).width(Length::Shrink);
+    let mut cards: Row<'_, OnboardingMessage> =
+        Row::new().spacing(FEATURE_CARD_GAP).width(Length::Shrink);
     for index in 0..FEATURE_COUNT {
         cards = cards.push(feature_card(state, index));
     }
