@@ -94,9 +94,9 @@ fn header_row(state: &OnboardingState) -> Element<'_, OnboardingMessage> {
     ]
     .spacing(2);
 
-    let theme_toggle = theme_toggle_button(state);
+    let controls = theme_toggle_button(state);
 
-    row![brand, Space::new().width(Length::Fill), theme_toggle,]
+    row![brand, Space::new().width(Length::Fill), controls,]
         .align_y(Vertical::Center)
         .width(Length::Fill)
         .into()
