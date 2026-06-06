@@ -133,7 +133,7 @@ impl OnboardingState {
     }
 
     pub fn subscription(&self) -> Subscription<OnboardingMessage> {
-        iced::time::every(Duration::from_millis(33)).map(OnboardingMessage::Tick)
+        iced::time::every(Duration::from_millis(1)).map(OnboardingMessage::Tick)
     }
 }
 
