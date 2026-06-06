@@ -10,9 +10,7 @@ use iced::Subscription;
 
 use crate::shared::design::{OpenZoneTheme, ThemeMode};
 
-use crate::features::onboarding::application::feature_card_dynamics::{
-    approach, highlight_target,
-};
+use crate::features::onboarding::application::feature_card_dynamics::{approach, highlight_target};
 use crate::features::onboarding::application::onboarding_dynamics::dynamics_for_progress;
 use crate::features::onboarding::application::onboarding_messages::OnboardingMessage;
 use crate::features::onboarding::domain::{
