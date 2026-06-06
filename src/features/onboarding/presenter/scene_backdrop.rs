@@ -51,10 +51,7 @@ impl<Message> Program<Message> for SceneBackdrop {
         let mut frame = Frame::new(renderer, bounds.size());
         let t = self.elapsed();
 
-        let dot_color = with_alpha(
-            self.theme.foreground(ForegroundToken::Muted),
-            0.12,
-        );
+        let dot_color = with_alpha(self.theme.foreground(ForegroundToken::Muted), 0.12);
 
         draw_dot_grid(&mut frame, bounds.size(), dot_color, t);
 
