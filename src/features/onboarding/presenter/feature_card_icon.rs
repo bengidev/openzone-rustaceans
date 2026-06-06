@@ -82,9 +82,7 @@ impl<Message> Program<Message> for FeatureCardIcon {
         };
         let line = (1.05 * fit).max(0.7);
         let node_size = (3.0 * fit).max(1.4);
-        let stroke = Stroke::default()
-            .with_width(line)
-            .with_color(stroke_color);
+        let stroke = Stroke::default().with_width(line).with_color(stroke_color);
 
         if emphasis > 0.02 {
             let radius = fit * (34.0 + pulse * 4.0 * emphasis);
@@ -100,13 +98,21 @@ impl<Message> Program<Message> for FeatureCardIcon {
 
         match self.kind {
             FeatureKind::Chat => draw_chat(&mut frame, &mapper, stroke, node, node_size),
-            FeatureKind::Terminal => {
-                draw_terminal(&mut frame, &mapper, stroke, stroke_color, node, node_size, fit)
-            }
+            FeatureKind::Terminal => draw_terminal(
+                &mut frame,
+                &mapper,
+                stroke,
+                stroke_color,
+                node,
+                node_size,
+                fit,
+            ),
             FeatureKind::TextEditor => {
                 draw_text_editor(&mut frame, &mapper, stroke, stroke_color, node, node_size)
             }
-            FeatureKind::Rust => draw_rust(&mut frame, &mapper, stroke, stroke_color, node, node_size),
+            FeatureKind::Rust => {
+                draw_rust(&mut frame, &mapper, stroke, stroke_color, node, node_size)
+            }
         }
 
         vec![frame.into_geometry()]
@@ -138,15 +144,21 @@ fn draw_glow(frame: &mut Frame, center: Point, radius: f32, accent: Color, peak_
     }
 }
 
-fn draw_chat(
-    frame: &mut Frame,
-    mapper: &Mapper,
-    stroke: Stroke<'_>,
-    node: Color,
-    node_size: f32,
-) {
-    stroke_rect(frame, mapper, Point::new(28.0, 28.0), Size::new(44.0, 36.0), stroke);
-    stroke_rect(frame, mapper, Point::new(58.0, 46.0), Size::new(44.0, 36.0), stroke);
+fn draw_chat(frame: &mut Frame, mapper: &Mapper, stroke: Stroke<'_>, node: Color, node_size: f32) {
+    stroke_rect(
+        frame,
+        mapper,
+        Point::new(28.0, 28.0),
+        Size::new(44.0, 36.0),
+        stroke,
+    );
+    stroke_rect(
+        frame,
+        mapper,
+        Point::new(58.0, 46.0),
+        Size::new(44.0, 36.0),
+        stroke,
+    );
 
     for point in [
         Point::new(28.0, 28.0),
@@ -196,7 +208,13 @@ fn draw_terminal(
     node_size: f32,
     fit: f32,
 ) {
-    stroke_rect(frame, mapper, Point::new(24.0, 22.0), Size::new(72.0, 76.0), stroke);
+    stroke_rect(
+        frame,
+        mapper,
+        Point::new(24.0, 22.0),
+        Size::new(72.0, 76.0),
+        stroke,
+    );
 
     for point in [
         Point::new(24.0, 22.0),
@@ -214,7 +232,11 @@ fn draw_terminal(
         stroke,
     );
 
-    for point in [Point::new(34.0, 29.0), Point::new(42.0, 29.0), Point::new(50.0, 29.0)] {
+    for point in [
+        Point::new(34.0, 29.0),
+        Point::new(42.0, 29.0),
+        Point::new(50.0, 29.0),
+    ] {
         fill_node(frame, mapper.map(point), node_size * 0.75, node);
     }
 
@@ -248,7 +270,13 @@ fn draw_text_editor(
     node: Color,
     node_size: f32,
 ) {
-    stroke_rect(frame, mapper, Point::new(22.0, 20.0), Size::new(76.0, 80.0), stroke);
+    stroke_rect(
+        frame,
+        mapper,
+        Point::new(22.0, 20.0),
+        Size::new(76.0, 80.0),
+        stroke,
+    );
 
     for point in [
         Point::new(22.0, 20.0),
@@ -340,13 +368,7 @@ fn draw_rust(
     }
 }
 
-fn stroke_rect(
-    frame: &mut Frame,
-    mapper: &Mapper,
-    origin: Point,
-    size: Size,
-    stroke: Stroke<'_>,
-) {
+fn stroke_rect(frame: &mut Frame, mapper: &Mapper, origin: Point, size: Size, stroke: Stroke<'_>) {
     frame.stroke_rectangle(
         mapper.map(origin),
         Size::new(size.width * mapper.fit, size.height * mapper.fit),
