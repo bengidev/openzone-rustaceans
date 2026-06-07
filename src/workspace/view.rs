@@ -7,7 +7,7 @@
 //! strip above the active panel's content. All styling resolves through
 //! `shared::design` tokens — no hardcoded colors or sizes.
 
-use iced::widget::{button, column, container, pane_grid, row, text, PaneGrid};
+use iced::widget::{PaneGrid, button, column, container, pane_grid, row, text};
 use iced::{Background, Border, Color, Element, Length};
 
 use crate::shared::design::{

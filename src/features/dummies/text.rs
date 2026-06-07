@@ -9,7 +9,7 @@
 use iced::widget::{column, text, text_input};
 use iced::{Element, Length};
 
-use crate::workspace::panel::{downcast, erase, ErasedMessage, Panel, PanelKind};
+use crate::workspace::panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
 
 /// Concrete message for the text panel.
 #[derive(Debug, Clone, PartialEq, Eq)]

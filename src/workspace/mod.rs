@@ -27,7 +27,7 @@ pub mod view;
 pub use location::PanelLocation;
 pub use message::WorkspaceMessage;
 pub use pane_state::PaneState;
-pub use panel::{downcast, erase, ErasedMessage, Panel, PanelKind};
+pub use panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
 pub use registry::{PanelConstructor, PanelRegistry};
 pub use state::Workspace;
 

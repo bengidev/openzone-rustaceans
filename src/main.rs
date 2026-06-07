@@ -11,7 +11,7 @@ mod workspace;
 
 use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
 use crate::shared::design::ThemeMode;
-use crate::workspace::{Panel, PaneState, PanelKind, PanelRegistry};
+use crate::workspace::{PaneState, Panel, PanelKind, PanelRegistry};
 
 fn main() -> iced::Result {
     // Register feature panel constructors. This table is the

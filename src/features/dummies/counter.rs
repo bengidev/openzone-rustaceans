@@ -9,7 +9,7 @@
 use iced::widget::{button, column, text};
 use iced::{Element, Length};
 
-use crate::workspace::panel::{downcast, erase, ErasedMessage, Panel, PanelKind};
+use crate::workspace::panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
 
 /// Concrete message for the counter panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

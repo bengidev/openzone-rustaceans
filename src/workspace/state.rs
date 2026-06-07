@@ -7,8 +7,8 @@
 //! messages funnel through [`Workspace::update`] (single-writer). The
 //! view layer reads this state by `&self`; only the reducer mutates.
 
-use iced::widget::pane_grid;
 use iced::Subscription;
+use iced::widget::pane_grid;
 
 use crate::shared::design::{OpenZoneTheme, ThemeMode};
 use crate::workspace::location::PanelLocation;
@@ -107,14 +107,15 @@ impl Workspace {
                 // `Subscription::map` requires a non-capturing closure in
                 // Iced 0.14, so the routing metadata is threaded through
                 // `with` (zipped onto each message) rather than captured.
-                let tagged = panel
-                    .subscription()
-                    .with((location, tab))
-                    .map(|((location, tab), message)| WorkspaceMessage::Panel {
-                        location,
-                        tab,
-                        message,
-                    });
+                let tagged =
+                    panel
+                        .subscription()
+                        .with((location, tab))
+                        .map(|((location, tab), message)| WorkspaceMessage::Panel {
+                            location,
+                            tab,
+                            message,
+                        });
                 streams.push(tagged);
             }
         }
@@ -127,13 +128,11 @@ mod tests {
     use super::*;
     use crate::features::dummies::clock::ClockMessage;
     use crate::features::dummies::{CounterPanel, TextPanel};
-    use crate::workspace::panel::{erase, Panel};
+    use crate::workspace::panel::{Panel, erase};
 
     fn three_tab_workspace() -> Workspace {
-        let tabs: Vec<Box<dyn Panel>> = vec![
-            Box::new(CounterPanel::new()),
-            Box::new(TextPanel::new()),
-        ];
+        let tabs: Vec<Box<dyn Panel>> =
+            vec![Box::new(CounterPanel::new()), Box::new(TextPanel::new())];
         Workspace::single_pane(PaneState::new(tabs), ThemeMode::Dark)
     }
 
@@ -176,10 +175,7 @@ mod tests {
         let mut workspace = three_tab_workspace();
         let location = only_location(&workspace);
 
-        workspace.update(WorkspaceMessage::TabSelected {
-            location,
-            tab: 99,
-        });
+        workspace.update(WorkspaceMessage::TabSelected { location, tab: 99 });
 
         let pane = match location {
             PanelLocation::Center(pane) => pane,
@@ -207,9 +203,7 @@ mod tests {
         workspace.update(WorkspaceMessage::Panel {
             location,
             tab: 0,
-            message: erase(
-                crate::features::dummies::counter::CounterMessage::Increment,
-            ),
+            message: erase(crate::features::dummies::counter::CounterMessage::Increment),
         });
 
         let pane = match location {

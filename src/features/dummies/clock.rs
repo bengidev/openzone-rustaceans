@@ -12,7 +12,7 @@ use std::time::Duration;
 use iced::widget::{column, text};
 use iced::{Element, Length, Subscription};
 
-use crate::workspace::panel::{downcast, erase, ErasedMessage, Panel, PanelKind};
+use crate::workspace::panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
 
 /// Concrete message for the clock panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
