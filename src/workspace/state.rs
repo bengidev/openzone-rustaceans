@@ -87,10 +87,10 @@ impl Workspace {
     /// Deliver an erased message to the exact panel that produced it.
     /// A panel that has since been removed (stale tab index) is a no-op.
     fn route_to_panel(&mut self, location: PanelLocation, tab: usize, message: ErasedMessage) {
-        if let Some(pane_state) = self.pane_state_mut(location) {
-            if let Some(panel) = pane_state.tabs.get_mut(tab) {
-                panel.update(message);
-            }
+        if let Some(pane_state) = self.pane_state_mut(location)
+            && let Some(panel) = pane_state.tabs.get_mut(tab)
+        {
+            panel.update(message);
         }
     }
 
@@ -154,9 +154,7 @@ mod tests {
 
         workspace.update(WorkspaceMessage::TabSelected { location, tab: 1 });
 
-        let pane = match location {
-            PanelLocation::Center(pane) => pane,
-        };
+        let PanelLocation::Center(pane) = location;
         assert_eq!(workspace.panes.get(pane).unwrap().active, 1);
     }
 
@@ -177,9 +175,7 @@ mod tests {
 
         workspace.update(WorkspaceMessage::TabSelected { location, tab: 99 });
 
-        let pane = match location {
-            PanelLocation::Center(pane) => pane,
-        };
+        let PanelLocation::Center(pane) = location;
         assert_eq!(workspace.panes.get(pane).unwrap().active, 0);
     }
 
@@ -206,9 +202,7 @@ mod tests {
             message: erase(crate::features::dummies::counter::CounterMessage::Increment),
         });
 
-        let pane = match location {
-            PanelLocation::Center(pane) => pane,
-        };
+        let PanelLocation::Center(pane) = location;
         let counter = workspace.panes.get(pane).unwrap().tabs[0]
             .snapshot()
             .get("count")
