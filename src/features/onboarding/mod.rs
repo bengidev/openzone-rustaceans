@@ -18,7 +18,6 @@ pub mod presenter;
 
 pub use application::{OnboardingMessage, OnboardingState, mark_completed};
 pub use domain::{OnboardingOutcome, OnboardingPersistence};
-pub use infrastructure::{FileOnboardingPersistence, InMemoryOnboardingPersistence};
 pub use presenter::view;
 
 use iced::{Element, Subscription, Task, Theme};

@@ -144,7 +144,7 @@ pub fn mark_completed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::onboarding::infrastructure::InMemoryOnboardingPersistence;
+    use crate::features::onboarding::infrastructure::memory_persistence::InMemoryOnboardingPersistence;
 
     #[test]
     fn enter_yields_completed() {
