@@ -67,7 +67,8 @@ fn center_pane_grid(workspace: &Workspace, theme: OpenZoneTheme) -> Element<'_, 
         .width(Length::Fill)
         .height(Length::Fill)
         .spacing(SpacingToken::S2.value())
-        .on_click(WorkspaceMessage::PaneClicked);
+        .on_click(WorkspaceMessage::PaneClicked)
+        .on_drag(WorkspaceMessage::PaneDragged);
 
     container(grid)
         .width(Length::Fill)
