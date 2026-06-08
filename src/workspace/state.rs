@@ -55,6 +55,28 @@ impl Workspace {
         }
     }
 
+    /// Assemble a workspace from already-built parts. The composition
+    /// root uses this to restore a persisted layout: the pane grid, edge
+    /// docks, and focus location are reconstructed from a snapshot, then
+    /// handed here with the shipped keymap and resolved theme. The
+    /// caller guarantees `focused` addresses a location that exists in
+    /// `panes`/`docks`.
+    pub fn from_parts(
+        panes: pane_grid::State<PaneState>,
+        docks: Docks,
+        focused: PanelLocation,
+        theme_mode: ThemeMode,
+    ) -> Self {
+        Self {
+            panes,
+            docks,
+            keymap: Keymap::default(),
+            focused,
+            theme: OpenZoneTheme::from_mode(theme_mode),
+            theme_mode,
+        }
+    }
+
     /// The pane backing a location, if it still exists.
     fn pane_state(&self, location: PanelLocation) -> Option<&PaneState> {
         match location {
