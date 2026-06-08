@@ -1,46 +1,42 @@
 #![allow(dead_code)]
 
-//! Clock dummy panel — ticks via a panel-level subscription.
+//! Clock dummy panel — view over the global [`ClockStore`] tick.
 //!
-//! Proves the [`Panel::subscription`] seam: the panel exposes a timer
-//! subscription, the workspace batches it, and Iced starts/stops it
-//! with the panel's lifecycle. Stands in for LLM-token / PTY streams
-//! without building a real streaming feature.
-
-use std::time::Duration;
+//! Stateless from the panel's point of view: it holds nothing and reads
+//! `stores.clock.ticks()` on every render. The 1 Hz timer that drives
+//! the tick lives **once at the workspace level** — gated on whether
+//! any Clock panel exists — and mutates [`ClockStore`] exactly once per
+//! tick. Every Clock panel observes the same value (single-source fan-
+//! out); removing the last Clock tab also removes the addressing reason
+//! for the subscription, so Iced stops it without orphan streams.
 
 use iced::widget::{column, text};
 use iced::{Element, Length, Subscription};
 
-use crate::workspace::panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
+use crate::workspace::panel::{ErasedMessage, Panel, PanelKind};
+use crate::workspace::stores::AppStores;
 
-/// Concrete message for the clock panel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClockMessage {
-    Tick,
-}
-
-/// A panel counting subscription ticks since creation.
-pub struct ClockPanel {
-    ticks: u64,
-}
+/// A panel that reads the global tick count from [`ClockStore`]. It
+/// holds no per-instance state — every Clock panel observes the same
+/// store value, which is the property the issue's "single store-level
+/// Clock subscription" point relies on.
+pub struct ClockPanel;
 
 impl ClockPanel {
     pub fn new() -> Self {
-        Self { ticks: 0 }
+        Self
     }
 
-    /// Rehydrate from a snapshot handle; falls back to zero.
-    pub fn from_snapshot(snapshot: serde_json::Value) -> Self {
+    /// Rehydrate from a snapshot handle. The Clock store is global, so
+    /// the persisted tick count is folded into [`ClockStore::restore`]
+    /// (max-of-seen) rather than a per-panel field.
+    pub fn from_snapshot(snapshot: serde_json::Value, stores: &mut AppStores) -> Self {
         let ticks = snapshot
             .get("ticks")
             .and_then(|value| value.as_u64())
             .unwrap_or(0);
-        Self { ticks }
-    }
-
-    pub fn ticks(&self) -> u64 {
-        self.ticks
+        stores.clock.restore(ticks);
+        Self
     }
 }
 
@@ -59,8 +55,8 @@ impl Panel for ClockPanel {
         PanelKind::Clock
     }
 
-    fn view(&self) -> Element<'_, ErasedMessage> {
-        let display = text(format!("Ticks: {}", self.ticks)).size(28);
+    fn view<'a>(&'a self, stores: &'a AppStores) -> Element<'a, ErasedMessage> {
+        let display = text(format!("Ticks: {}", stores.clock.ticks())).size(28);
         let hint = text("updates once per second").size(12);
 
         column![display, hint]
@@ -69,21 +65,23 @@ impl Panel for ClockPanel {
             .into()
     }
 
-    fn update(&mut self, message: ErasedMessage) {
-        match downcast::<ClockMessage>(message) {
-            Some(message) => match *message {
-                ClockMessage::Tick => self.ticks += 1,
-            },
-            None => debug_assert!(false, "ClockPanel received a foreign message"),
-        }
+    fn update(&mut self, _message: ErasedMessage, _stores: &mut AppStores) {
+        // Clock has no per-panel intents; the global tick is driven by
+        // the workspace-level subscription, not by panel messages. A
+        // message arriving here is a routing bug.
+        debug_assert!(false, "ClockPanel does not consume per-panel messages");
     }
 
+    /// No per-panel subscription. The 1 Hz tick lives at the workspace
+    /// layer so a single timer fans out to every Clock panel rather
+    /// than spawning N parallel timers — see
+    /// `Workspace::subscription`.
     fn subscription(&self) -> Subscription<ErasedMessage> {
-        iced::time::every(Duration::from_secs(1)).map(|_| erase(ClockMessage::Tick))
+        Subscription::none()
     }
 
-    fn snapshot(&self) -> serde_json::Value {
-        serde_json::json!({ "ticks": self.ticks })
+    fn snapshot(&self, stores: &AppStores) -> serde_json::Value {
+        serde_json::json!({ "ticks": stores.clock.ticks() })
     }
 }
 
@@ -92,18 +90,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tick_advances_count() {
-        let mut panel = ClockPanel::new();
-        panel.update(erase(ClockMessage::Tick));
-        panel.update(erase(ClockMessage::Tick));
-        assert_eq!(panel.ticks(), 2);
+    fn view_reads_global_tick() {
+        let mut stores = AppStores::new();
+        let panel = ClockPanel::new();
+
+        // The store advances; the panel reflects the new value with no
+        // panel-side bookkeeping.
+        stores.clock.tick();
+        stores.clock.tick();
+
+        assert_eq!(
+            panel
+                .snapshot(&stores)
+                .get("ticks")
+                .and_then(|v| v.as_u64()),
+            Some(2)
+        );
     }
 
     #[test]
-    fn snapshot_round_trips_through_constructor() {
-        let mut panel = ClockPanel::new();
-        panel.update(erase(ClockMessage::Tick));
-        let restored = ClockPanel::from_snapshot(panel.snapshot());
-        assert_eq!(restored.ticks(), 1);
+    fn restore_brings_global_tick_forward() {
+        let mut stores = AppStores::new();
+        let _panel = ClockPanel::from_snapshot(serde_json::json!({ "ticks": 5 }), &mut stores);
+        assert_eq!(stores.clock.ticks(), 5);
+    }
+
+    #[test]
+    fn two_panels_share_one_store_value() {
+        let mut stores = AppStores::new();
+        let a = ClockPanel::new();
+        let b = ClockPanel::new();
+        stores.clock.tick();
+
+        // Both observers report the same value: the issue's
+        // "every Clock panel reads the same value" invariant.
+        assert_eq!(a.snapshot(&stores), b.snapshot(&stores));
+        assert_eq!(
+            a.snapshot(&stores).get("ticks").and_then(|v| v.as_u64()),
+            Some(1)
+        );
     }
 }

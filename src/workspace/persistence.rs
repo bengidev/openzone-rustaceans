@@ -23,6 +23,7 @@ use crate::workspace::pane_state::PaneState;
 use crate::workspace::panel::{Panel, PanelKind};
 use crate::workspace::registry::PanelRegistry;
 use crate::workspace::state::Workspace;
+use crate::workspace::stores::AppStores;
 
 /// A panel reduced to its rehydration handle: which kind, plus the
 /// handle-only JSON the panel's own `snapshot()` produced.
@@ -106,9 +107,14 @@ pub struct LayoutSnapshot {
 // ---- capture (live Workspace -> snapshot) --------------------------------
 
 /// Capture the workspace's current layout as a handle-only snapshot.
-pub fn capture(workspace: &Workspace) -> LayoutSnapshot {
+///
+/// Each panel's [`Panel::snapshot`] reads from `stores` so a Counter
+/// panel persists the canonical store count rather than a stale local
+/// copy. The capture itself stays pure — only handles cross the
+/// boundary, never panel content or store interiors.
+pub fn capture(workspace: &Workspace, stores: &AppStores) -> LayoutSnapshot {
     let layout = workspace.panes.layout();
-    let center = capture_node(layout, &workspace.panes);
+    let center = capture_node(layout, &workspace.panes, stores);
 
     let mut leaves = Vec::new();
     collect_leaves(layout, &mut leaves);
@@ -123,22 +129,26 @@ pub fn capture(workspace: &Workspace) -> LayoutSnapshot {
 
     LayoutSnapshot {
         center,
-        left: capture_dock(&workspace.docks.left),
-        right: capture_dock(&workspace.docks.right),
-        bottom: capture_dock(&workspace.docks.bottom),
+        left: capture_dock(&workspace.docks.left, stores),
+        right: capture_dock(&workspace.docks.right, stores),
+        bottom: capture_dock(&workspace.docks.bottom, stores),
         focus,
     }
 }
 
-fn capture_node(node: &Node, panes: &pane_grid::State<PaneState>) -> CenterNode {
+fn capture_node(
+    node: &Node,
+    panes: &pane_grid::State<PaneState>,
+    stores: &AppStores,
+) -> CenterNode {
     match node {
         Node::Split {
             axis, ratio, a, b, ..
         } => CenterNode::Split {
             axis: SplitAxis::from_axis(*axis),
             ratio: *ratio,
-            a: Box::new(capture_node(a, panes)),
-            b: Box::new(capture_node(b, panes)),
+            a: Box::new(capture_node(a, panes, stores)),
+            b: Box::new(capture_node(b, panes, stores)),
         },
         Node::Pane(pane) => {
             // The layout tree and the pane map are kept in lockstep by
@@ -146,7 +156,7 @@ fn capture_node(node: &Node, panes: &pane_grid::State<PaneState>) -> CenterNode 
             let pane_state = panes
                 .get(*pane)
                 .expect("layout leaf must have backing pane state");
-            CenterNode::Pane(capture_pane(pane_state))
+            CenterNode::Pane(capture_pane(pane_state, stores))
         }
     }
 }
@@ -165,23 +175,23 @@ fn collect_leaves(node: &Node, out: &mut Vec<pane_grid::Pane>) {
     }
 }
 
-fn capture_pane(pane_state: &PaneState) -> PaneSnapshot {
+fn capture_pane(pane_state: &PaneState, stores: &AppStores) -> PaneSnapshot {
     PaneSnapshot {
         tabs: pane_state
             .tabs
             .iter()
             .map(|panel| PanelHandle {
                 kind: panel.kind(),
-                snapshot: panel.snapshot(),
+                snapshot: panel.snapshot(stores),
             })
             .collect(),
         active: pane_state.active,
     }
 }
 
-fn capture_dock(dock: &Dock) -> DockSnapshot {
+fn capture_dock(dock: &Dock, stores: &AppStores) -> DockSnapshot {
     DockSnapshot {
-        tabs: capture_pane(&dock.tabs),
+        tabs: capture_pane(&dock.tabs, stores),
         open: dock.open,
     }
 }
@@ -189,15 +199,18 @@ fn capture_dock(dock: &Dock) -> DockSnapshot {
 // ---- restore (snapshot -> live Workspace) --------------------------------
 
 /// Rebuild a [`Workspace`] from a snapshot. Each panel is rehydrated
-/// through the registry from its handle; an unknown kind (no registered
-/// constructor) is dropped, and the active index is clamped to the
-/// surviving tabs so it never dangles.
+/// through the registry from its handle (which may allocate a fresh
+/// store slot — e.g. a [`crate::workspace::stores::CounterId`] seeded
+/// at the persisted count); an unknown kind (no registered constructor)
+/// is dropped, and the active index is clamped to the surviving tabs
+/// so it never dangles.
 pub fn restore(
     snapshot: &LayoutSnapshot,
     registry: &PanelRegistry,
+    stores: &mut AppStores,
     theme_mode: ThemeMode,
 ) -> Workspace {
-    let config = restore_config(&snapshot.center, registry);
+    let config = restore_config(&snapshot.center, registry, stores);
     let panes = pane_grid::State::with_configuration(config);
 
     // `State::iter` yields panes in ascending id order, which equals the
@@ -217,31 +230,39 @@ pub fn restore(
     };
 
     let docks = Docks {
-        left: restore_dock(&snapshot.left, registry),
-        right: restore_dock(&snapshot.right, registry),
-        bottom: restore_dock(&snapshot.bottom, registry),
+        left: restore_dock(&snapshot.left, registry, stores),
+        right: restore_dock(&snapshot.right, registry, stores),
+        bottom: restore_dock(&snapshot.bottom, registry, stores),
     };
 
     Workspace::from_parts(panes, docks, focused, theme_mode)
 }
 
-fn restore_config(node: &CenterNode, registry: &PanelRegistry) -> Configuration<PaneState> {
+fn restore_config(
+    node: &CenterNode,
+    registry: &PanelRegistry,
+    stores: &mut AppStores,
+) -> Configuration<PaneState> {
     match node {
         CenterNode::Split { axis, ratio, a, b } => Configuration::Split {
             axis: axis.to_axis(),
             ratio: *ratio,
-            a: Box::new(restore_config(a, registry)),
-            b: Box::new(restore_config(b, registry)),
+            a: Box::new(restore_config(a, registry, stores)),
+            b: Box::new(restore_config(b, registry, stores)),
         },
-        CenterNode::Pane(snapshot) => Configuration::Pane(restore_pane(snapshot, registry)),
+        CenterNode::Pane(snapshot) => Configuration::Pane(restore_pane(snapshot, registry, stores)),
     }
 }
 
-fn restore_pane(snapshot: &PaneSnapshot, registry: &PanelRegistry) -> PaneState {
+fn restore_pane(
+    snapshot: &PaneSnapshot,
+    registry: &PanelRegistry,
+    stores: &mut AppStores,
+) -> PaneState {
     let tabs: Vec<Box<dyn Panel>> = snapshot
         .tabs
         .iter()
-        .filter_map(|handle| registry.build(handle.kind, handle.snapshot.clone()))
+        .filter_map(|handle| registry.build(handle.kind, handle.snapshot.clone(), stores))
         .collect();
 
     let mut pane_state = PaneState::new(tabs);
@@ -251,9 +272,9 @@ fn restore_pane(snapshot: &PaneSnapshot, registry: &PanelRegistry) -> PaneState 
     pane_state
 }
 
-fn restore_dock(snapshot: &DockSnapshot, registry: &PanelRegistry) -> Dock {
+fn restore_dock(snapshot: &DockSnapshot, registry: &PanelRegistry, stores: &mut AppStores) -> Dock {
     Dock {
-        tabs: restore_pane(&snapshot.tabs, registry),
+        tabs: restore_pane(&snapshot.tabs, registry, stores),
         open: snapshot.open,
     }
 }
@@ -264,56 +285,64 @@ mod tests {
     use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
     use crate::workspace::command::Command;
     use crate::workspace::location::DockSide;
+    use crate::workspace::stores::AppStores;
 
     fn test_registry() -> PanelRegistry {
         let mut registry = PanelRegistry::new();
         registry
-            .register(PanelKind::Counter, |s| {
-                Box::new(CounterPanel::from_snapshot(s))
+            .register(PanelKind::Counter, |s, stores| {
+                Box::new(CounterPanel::from_snapshot(s, stores))
             })
-            .register(PanelKind::Text, |s| Box::new(TextPanel::from_snapshot(s)))
-            .register(PanelKind::Clock, |s| Box::new(ClockPanel::from_snapshot(s)));
+            .register(PanelKind::Text, |s, _stores| {
+                Box::new(TextPanel::from_snapshot(s))
+            })
+            .register(PanelKind::Clock, |s, stores| {
+                Box::new(ClockPanel::from_snapshot(s, stores))
+            });
         registry
     }
 
-    fn seeded_workspace() -> Workspace {
+    fn seeded_workspace() -> (Workspace, AppStores) {
+        let mut stores = AppStores::new();
         let center = PaneState::new(vec![
-            Box::new(CounterPanel::new()),
+            Box::new(CounterPanel::new(&mut stores)),
             Box::new(TextPanel::new()),
             Box::new(ClockPanel::new()),
         ]);
         let docks = Docks::new(
             PaneState::new(vec![Box::new(ClockPanel::new())]),
-            PaneState::new(vec![Box::new(CounterPanel::new())]),
+            PaneState::new(vec![Box::new(CounterPanel::new(&mut stores))]),
             PaneState::new(vec![Box::new(TextPanel::new())]),
         );
-        Workspace::with_docks(center, docks, ThemeMode::Dark)
+        let workspace = Workspace::with_docks(center, docks, ThemeMode::Dark);
+        (workspace, stores)
     }
 
     #[test]
     fn per_panel_handle_round_trips_through_registry() {
         let registry = test_registry();
+        let mut stores = AppStores::new();
 
-        let mut counter = CounterPanel::new();
-        counter.update(crate::workspace::panel::erase(
-            crate::features::dummies::counter::CounterMessage::Increment,
-        ));
+        let counter = CounterPanel::new(&mut stores);
+        // Drive the canonical store value, then snapshot through it.
+        stores.counter.increment(counter.id());
         let handle = PanelHandle {
             kind: counter.kind(),
-            snapshot: counter.snapshot(),
+            snapshot: counter.snapshot(&stores),
         };
 
+        let mut rebuild_stores = AppStores::new();
         let rebuilt = registry
-            .build(handle.kind, handle.snapshot.clone())
+            .build(handle.kind, handle.snapshot.clone(), &mut rebuild_stores)
             .expect("counter kind is registered");
         assert_eq!(rebuilt.kind(), PanelKind::Counter);
-        assert_eq!(rebuilt.snapshot(), handle.snapshot);
+        assert_eq!(rebuilt.snapshot(&rebuild_stores), handle.snapshot);
     }
 
     #[test]
     fn json_round_trip_preserves_structure() {
-        let workspace = seeded_workspace();
-        let snapshot = capture(&workspace);
+        let (workspace, stores) = seeded_workspace();
+        let snapshot = capture(&workspace, &stores);
 
         let json = serde_json::to_string(&snapshot).expect("serialize");
         let decoded: LayoutSnapshot = serde_json::from_str(&json).expect("deserialize");
@@ -323,40 +352,69 @@ mod tests {
 
     #[test]
     fn capture_restore_capture_is_structurally_equal() {
-        let mut workspace = seeded_workspace();
+        let (mut workspace, mut stores) = seeded_workspace();
         // Build a non-trivial layout: a split, a focus move, an open dock.
-        workspace.apply_command(Command::SplitFocused);
-        workspace.apply_command(Command::ToggleDock(DockSide::Right));
+        workspace.apply_command(Command::SplitFocused, &mut stores);
+        workspace.apply_command(Command::ToggleDock(DockSide::Right), &mut stores);
 
-        let first = capture(&workspace);
-        let restored = restore(&first, &test_registry(), ThemeMode::Dark);
-        let second = capture(&restored);
+        let first = capture(&workspace, &stores);
+        let mut restored_stores = AppStores::new();
+        let restored = restore(
+            &first,
+            &test_registry(),
+            &mut restored_stores,
+            ThemeMode::Dark,
+        );
+        let second = capture(&restored, &restored_stores);
 
         assert_eq!(first, second);
     }
 
     #[test]
     fn restore_rehydrates_panel_content() {
-        let mut workspace = seeded_workspace();
-        // Drive the first center tab (a Counter) up to 3.
+        let (workspace, mut stores) = seeded_workspace();
+        // Drive the first center tab (a Counter) up to 3 through the
+        // store — that's the source of truth that capture reads from.
         if let PanelLocation::Center(pane) = workspace.focused {
-            let counter = workspace.panes.get_mut(pane).unwrap().tabs[0].as_mut();
-            for _ in 0..3 {
-                counter.update(crate::workspace::panel::erase(
-                    crate::features::dummies::counter::CounterMessage::Increment,
-                ));
-            }
+            // Re-borrow stores after we drop the immutable borrow on workspace.
+            let _ = pane;
+        }
+        // Mutate via store directly: the panel is a view, so mutating the
+        // store has the same effect as routing three intents.
+        let counter_id = {
+            let pane_state = workspace.panes.iter().next().unwrap().1;
+            // The Counter is at index 0 of the center pane; recover its
+            // id from the live store by reading what its snapshot
+            // currently addresses.
+            let snapshot = pane_state.tabs[0].snapshot(&stores);
+            // The CounterPanel test exposed `id()`, but here we don't
+            // have the concrete type. Instead, drive every live counter:
+            // there's only one counter in the center tab.
+            let _ = snapshot;
+            0u64
+        };
+        let _ = counter_id;
+        // The seeded workspace allocated counter id 0 in the center and
+        // counter id 1 in the right dock. Drive id 0 (center tab).
+        for _ in 0..3 {
+            stores.counter.increment(0);
         }
 
-        let snapshot = capture(&workspace);
-        let restored = restore(&snapshot, &test_registry(), ThemeMode::Dark);
+        let snapshot = capture(&workspace, &stores);
+        let mut restored_stores = AppStores::new();
+        let restored = restore(
+            &snapshot,
+            &test_registry(),
+            &mut restored_stores,
+            ThemeMode::Dark,
+        );
 
         let pane = match restored.focused {
             PanelLocation::Center(pane) => pane,
             _ => panic!("expected center focus"),
         };
         let count = restored.panes.get(pane).unwrap().tabs[0]
-            .snapshot()
+            .snapshot(&restored_stores)
             .get("count")
             .and_then(|v| v.as_i64())
             .unwrap();
@@ -365,11 +423,17 @@ mod tests {
 
     #[test]
     fn restore_preserves_dock_open_state_and_focus() {
-        let mut workspace = seeded_workspace();
-        workspace.apply_command(Command::ToggleDock(DockSide::Right));
+        let (mut workspace, mut stores) = seeded_workspace();
+        workspace.apply_command(Command::ToggleDock(DockSide::Right), &mut stores);
 
-        let snapshot = capture(&workspace);
-        let restored = restore(&snapshot, &test_registry(), ThemeMode::Dark);
+        let snapshot = capture(&workspace, &stores);
+        let mut restored_stores = AppStores::new();
+        let restored = restore(
+            &snapshot,
+            &test_registry(),
+            &mut restored_stores,
+            ThemeMode::Dark,
+        );
 
         assert!(restored.docks.right.open);
         assert_eq!(restored.focused, PanelLocation::Dock(DockSide::Right));
@@ -384,7 +448,8 @@ mod tests {
             }],
             active: 99,
         };
-        let pane = restore_pane(&snapshot, &test_registry());
+        let mut stores = AppStores::new();
+        let pane = restore_pane(&snapshot, &test_registry(), &mut stores);
         assert_eq!(pane.active, 0);
     }
 }

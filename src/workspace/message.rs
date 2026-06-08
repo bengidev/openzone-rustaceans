@@ -39,6 +39,16 @@ pub enum WorkspaceMessage {
     /// Flip the workspace between light and dark mode. Repaints this
     /// window via the daemon's per-window `theme` callback.
     ToggleTheme,
+    /// One tick from the single, store-level Clock subscription.
+    ///
+    /// The workspace gates a 1 Hz timer on whether any Clock panel
+    /// exists in the layout. Each tick is folded into
+    /// [`crate::workspace::stores::ClockStore::tick`] exactly once, and
+    /// every Clock panel re-renders against the new value (single-source
+    /// fan-out). Removing the last Clock tab also removes the gating
+    /// reason for the subscription, so Iced stops it without orphan
+    /// streams.
+    ClockTick,
     /// A drag-and-drop interaction on the center pane grid. On
     /// `Dropped` the reducer reorders the panes; other phases are no-ops.
     PaneDragged(pane_grid::DragEvent),
@@ -67,6 +77,7 @@ impl std::fmt::Debug for WorkspaceMessage {
             WorkspaceMessage::Key(chord) => f.debug_tuple("Key").field(chord).finish(),
             WorkspaceMessage::Command(command) => f.debug_tuple("Command").field(command).finish(),
             WorkspaceMessage::ToggleTheme => f.debug_tuple("ToggleTheme").finish(),
+            WorkspaceMessage::ClockTick => f.debug_tuple("ClockTick").finish(),
             WorkspaceMessage::PaneDragged(event) => {
                 f.debug_tuple("PaneDragged").field(event).finish()
             }

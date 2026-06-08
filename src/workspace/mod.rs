@@ -26,6 +26,7 @@ pub mod panel;
 pub mod persistence;
 pub mod registry;
 pub mod state;
+pub mod stores;
 pub mod view;
 
 pub use command::{Chord, Command, KeyRef, Keymap, Mods, chord_from_keyboard_event};
@@ -38,18 +39,23 @@ pub use panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
 pub use persistence::{LayoutSnapshot, capture, restore};
 pub use registry::{PanelConstructor, PanelRegistry};
 pub use state::Workspace;
+pub use stores::{AppStores, ClockStore, CounterId, CounterStore};
 
 use iced::{Subscription, Task, Theme};
 
 use crate::shared::design::ThemeMode;
 
-/// Launch the workspace shell as an Iced application.
+/// Launch the workspace shell as a single-window Iced application.
 ///
 /// The composition root passes a `build_pane` factory and a
 /// `build_docks` factory (the shell's boot closure may run more than
 /// once, so the initial layout must be reconstructible) and the
 /// registry. The registry is retained for later slices (persistence
 /// rehydrate, dynamic panel open).
+///
+/// This single-window entry point owns its own [`AppStores`] for
+/// parity with the daemon entry point, which keeps `AppStores` as a
+/// sibling field of the workspace on the app root.
 pub fn run<F, D>(
     build_pane: F,
     build_docks: D,
@@ -63,7 +69,13 @@ where
     iced::application(
         move || {
             let workspace = Workspace::with_docks(build_pane(), build_docks(), theme_mode);
-            (WorkspaceApp { workspace }, Task::none())
+            (
+                WorkspaceApp {
+                    workspace,
+                    stores: AppStores::new(),
+                },
+                Task::none(),
+            )
         },
         WorkspaceApp::update,
         WorkspaceApp::view,
@@ -76,18 +88,23 @@ where
 }
 
 /// Iced application wrapper for the workspace shell.
+///
+/// Holds [`AppStores`] alongside the [`Workspace`] so the reducer can
+/// split-borrow them — the same pattern the multi-window daemon uses
+/// at app root.
 struct WorkspaceApp {
     workspace: Workspace,
+    stores: AppStores,
 }
 
 impl WorkspaceApp {
     fn update(&mut self, message: WorkspaceMessage) -> Task<WorkspaceMessage> {
-        self.workspace.update(message);
+        self.workspace.update(message, &mut self.stores);
         Task::none()
     }
 
     fn view(&self) -> iced::Element<'_, WorkspaceMessage> {
-        view::view(&self.workspace)
+        view::view(&self.workspace, &self.stores)
     }
 
     fn subscription(&self) -> Subscription<WorkspaceMessage> {

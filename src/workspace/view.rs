@@ -20,27 +20,33 @@ use crate::workspace::location::{DockSide, PanelLocation};
 use crate::workspace::message::WorkspaceMessage;
 use crate::workspace::pane_state::PaneState;
 use crate::workspace::state::Workspace;
+use crate::workspace::stores::AppStores;
 
 const SIDE_DOCK_WIDTH: f32 = 280.0;
 const BOTTOM_DOCK_HEIGHT: f32 = 200.0;
 const DOCK_RAIL_THICKNESS: f32 = 28.0;
 
-/// Render the whole workspace shell.
-pub fn view(workspace: &Workspace) -> Element<'_, WorkspaceMessage> {
+/// Render the whole workspace shell as a view over `stores`.
+///
+/// Threading [`AppStores`] through the view tree is what lets Counter
+/// and Clock panels render their canonical store value (view-over-
+/// handle); panels addressing a store slice receive the same `&stores`
+/// reference at every level so the render is consistent within a frame.
+pub fn view<'a>(workspace: &'a Workspace, stores: &'a AppStores) -> Element<'a, WorkspaceMessage> {
     let theme = workspace.theme;
 
-    let center = center_pane_grid(workspace, theme);
+    let center = center_pane_grid(workspace, stores, theme);
 
     let main_row = row![
-        dock_side(workspace, theme, DockSide::Left),
+        dock_side(workspace, stores, theme, DockSide::Left),
         center,
-        dock_side(workspace, theme, DockSide::Right),
+        dock_side(workspace, stores, theme, DockSide::Right),
     ]
     .width(Length::Fill)
     .height(Length::Fill)
     .spacing(SpacingToken::Hairline.value());
 
-    let body = column![main_row, dock_bottom(workspace, theme)]
+    let body = column![main_row, dock_bottom(workspace, stores, theme)]
         .width(Length::Fill)
         .height(Length::Fill)
         .spacing(SpacingToken::Hairline.value());
@@ -57,12 +63,16 @@ pub fn view(workspace: &Workspace) -> Element<'_, WorkspaceMessage> {
         .into()
 }
 
-fn center_pane_grid(workspace: &Workspace, theme: OpenZoneTheme) -> Element<'_, WorkspaceMessage> {
-    let grid: PaneGrid<'_, WorkspaceMessage> =
+fn center_pane_grid<'a>(
+    workspace: &'a Workspace,
+    stores: &'a AppStores,
+    theme: OpenZoneTheme,
+) -> Element<'a, WorkspaceMessage> {
+    let grid: PaneGrid<'a, WorkspaceMessage> =
         PaneGrid::new(&workspace.panes, |pane, pane_state, _is_maximized| {
             let location = PanelLocation::Center(pane);
             let focused = workspace.is_focused(location);
-            pane_grid::Content::new(pane_body(theme, location, pane_state, focused))
+            pane_grid::Content::new(pane_body(theme, location, pane_state, focused, stores))
         })
         .width(Length::Fill)
         .height(Length::Fill)
@@ -76,11 +86,12 @@ fn center_pane_grid(workspace: &Workspace, theme: OpenZoneTheme) -> Element<'_, 
         .into()
 }
 
-fn dock_side(
-    workspace: &Workspace,
+fn dock_side<'a>(
+    workspace: &'a Workspace,
+    stores: &'a AppStores,
     theme: OpenZoneTheme,
     side: DockSide,
-) -> Element<'_, WorkspaceMessage> {
+) -> Element<'a, WorkspaceMessage> {
     let dock = workspace.docks.get(side);
     let location = PanelLocation::Dock(side);
     let focused = workspace.is_focused(location);
@@ -90,7 +101,10 @@ fn dock_side(
     }
 
     if dock.open {
-        let body = focus_on_click(pane_body(theme, location, &dock.tabs, focused), location);
+        let body = focus_on_click(
+            pane_body(theme, location, &dock.tabs, focused, stores),
+            location,
+        );
         return container(body)
             .width(Length::Fixed(SIDE_DOCK_WIDTH))
             .height(Length::Fill)
@@ -110,7 +124,11 @@ fn dock_side(
     dock_rail(theme, side, location, focused, true)
 }
 
-fn dock_bottom(workspace: &Workspace, theme: OpenZoneTheme) -> Element<'_, WorkspaceMessage> {
+fn dock_bottom<'a>(
+    workspace: &'a Workspace,
+    stores: &'a AppStores,
+    theme: OpenZoneTheme,
+) -> Element<'a, WorkspaceMessage> {
     let dock = workspace.docks.get(DockSide::Bottom);
     let location = PanelLocation::Dock(DockSide::Bottom);
     let focused = workspace.is_focused(location);
@@ -120,7 +138,10 @@ fn dock_bottom(workspace: &Workspace, theme: OpenZoneTheme) -> Element<'_, Works
     }
 
     if dock.open {
-        let body = focus_on_click(pane_body(theme, location, &dock.tabs, focused), location);
+        let body = focus_on_click(
+            pane_body(theme, location, &dock.tabs, focused, stores),
+            location,
+        );
         return container(body)
             .width(Length::Fill)
             .height(Length::Fixed(BOTTOM_DOCK_HEIGHT))
@@ -273,17 +294,20 @@ fn pane_body<'a>(
     location: PanelLocation,
     pane_state: &'a PaneState,
     focused: bool,
+    stores: &'a AppStores,
 ) -> Element<'a, WorkspaceMessage> {
     let strip = tab_strip(theme, location, pane_state);
 
     let content: Element<'a, WorkspaceMessage> = match pane_state.active_panel() {
         Some(panel) => {
             let tab = pane_state.active;
-            panel.view().map(move |message| WorkspaceMessage::Panel {
-                location,
-                tab,
-                message,
-            })
+            panel
+                .view(stores)
+                .map(move |message| WorkspaceMessage::Panel {
+                    location,
+                    tab,
+                    message,
+                })
         }
         None => text("empty pane")
             .size(TypeRole::BodyMd.size())
