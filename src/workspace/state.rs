@@ -431,12 +431,6 @@ mod tests {
     fn counter_intent_lifts_to_a_single_store_mutation() {
         let (mut workspace, mut stores) = three_tab_workspace();
         let location = only_center_location(&workspace);
-        let counter_id = workspace.panes.iter().next().unwrap().1.tabs[0]
-            .snapshot(&stores)
-            .get("count")
-            .map(|_| ())
-            .unwrap();
-        let _ = counter_id;
 
         workspace.update(
             WorkspaceMessage::Panel {
