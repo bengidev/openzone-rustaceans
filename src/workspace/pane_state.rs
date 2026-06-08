@@ -59,23 +59,25 @@ impl PaneState {
         }
     }
 
-    /// Close the active tab and return whether the stack is now empty.
-    ///
-    /// After removal the active index is clamped to the last surviving
-    /// tab so it never dangles past the end. Closing the final tab
-    /// leaves the stack empty (`true`), which the caller uses to collapse
-    /// the owning pane or dock. Closing when already empty is a no-op.
-    pub fn close_active(&mut self) -> bool {
+    /// Close the active tab and return the panel that was removed, if
+    /// any. The caller is the one with `&mut AppStores`, so it invokes
+    /// the removed panel's [`Panel::on_close`] hook before dropping the
+    /// box — that's where store-backed panels release their slot
+    /// (`CounterId` etc.). The active index is then clamped to the last
+    /// surviving tab so it never dangles past the end.
+    pub fn close_active(&mut self) -> Option<Box<dyn Panel>> {
         if self.tabs.is_empty() {
-            return true;
+            return None;
         }
-        if self.active < self.tabs.len() {
-            self.tabs.remove(self.active);
-        }
+        let removed = if self.active < self.tabs.len() {
+            Some(self.tabs.remove(self.active))
+        } else {
+            None
+        };
         if self.active >= self.tabs.len() && !self.tabs.is_empty() {
             self.active = self.tabs.len() - 1;
         }
-        self.tabs.is_empty()
+        removed
     }
 }
 
@@ -83,10 +85,12 @@ impl PaneState {
 mod tests {
     use super::*;
     use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
+    use crate::workspace::stores::AppStores;
 
     fn three_tabs() -> PaneState {
+        let mut stores = AppStores::new();
         let tabs: Vec<Box<dyn Panel>> = vec![
-            Box::new(CounterPanel::new()),
+            Box::new(CounterPanel::new(&mut stores)),
             Box::new(TextPanel::new()),
             Box::new(ClockPanel::new()),
         ];
@@ -97,8 +101,8 @@ mod tests {
     fn close_active_removes_the_selected_tab() {
         let mut pane = three_tabs();
         pane.select(1);
-        let empty = pane.close_active();
-        assert!(!empty);
+        let removed = pane.close_active();
+        assert!(removed.is_some());
         assert_eq!(pane.len(), 2);
         // Counter (0) and Clock (formerly 2, now 1) remain.
         assert_eq!(pane.tabs[0].title(), "Counter");
@@ -117,16 +121,16 @@ mod tests {
     #[test]
     fn closing_every_tab_reports_empty() {
         let mut pane = three_tabs();
-        assert!(!pane.close_active());
-        assert!(!pane.close_active());
-        assert!(pane.close_active());
+        assert!(pane.close_active().is_some());
+        assert!(pane.close_active().is_some());
+        assert!(pane.close_active().is_some());
         assert!(pane.is_empty());
     }
 
     #[test]
     fn close_active_on_empty_is_noop_and_empty() {
         let mut pane = PaneState::empty();
-        assert!(pane.close_active());
+        assert!(pane.close_active().is_none());
         assert!(pane.is_empty());
     }
 }

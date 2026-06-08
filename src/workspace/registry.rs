@@ -7,13 +7,23 @@
 //! factories; the shell never names a concrete feature type. It doubles
 //! as the persistence seam (rebuild a saved layout) and the future
 //! plugin-registration seam.
+//!
+//! Constructors take `&mut AppStores` so a store-backed panel
+//! ([`crate::features::dummies::CounterPanel`]) can allocate its slot
+//! at rehydrate time, seeded from the persisted handle.
 
 use std::collections::HashMap;
 
 use crate::workspace::panel::{Panel, PanelKind};
+use crate::workspace::stores::AppStores;
 
 /// Rebuilds a panel of a known kind from a persisted snapshot handle.
-pub type PanelConstructor = fn(serde_json::Value) -> Box<dyn Panel>;
+///
+/// `&mut AppStores` is threaded through so that store-backed panels
+/// (e.g. Counter) can allocate a fresh slot seeded with the persisted
+/// value as part of their rehydration. Stateless panels (Text) ignore
+/// the parameter; the global Clock store is only `restore`-folded.
+pub type PanelConstructor = fn(serde_json::Value, &mut AppStores) -> Box<dyn Panel>;
 
 /// `PanelKind -> constructor` table wired at the composition root.
 #[derive(Default, Clone)]
@@ -41,10 +51,16 @@ impl PanelRegistry {
     }
 
     /// Build a panel of `kind` from `snapshot`. Returns `None` if no
-    /// constructor is registered for the kind.
-    pub fn build(&self, kind: PanelKind, snapshot: serde_json::Value) -> Option<Box<dyn Panel>> {
+    /// constructor is registered for the kind. The constructor receives
+    /// `&mut stores` so a store-backed panel can allocate its slot now.
+    pub fn build(
+        &self,
+        kind: PanelKind,
+        snapshot: serde_json::Value,
+        stores: &mut AppStores,
+    ) -> Option<Box<dyn Panel>> {
         self.constructors
             .get(&kind)
-            .map(|constructor| constructor(snapshot))
+            .map(|constructor| constructor(snapshot, stores))
     }
 }

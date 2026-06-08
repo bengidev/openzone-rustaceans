@@ -17,29 +17,65 @@ distinct **bounded context** — the *UI shell* — not a domain feature.
   with the pane grid's own click focus. Chrome (active-pane border, active-tab
   highlight) is a pure read of this focus.
 - **Subscription batching**: the workspace aggregates every live panel's
-  `subscription()` into one stream via `Subscription::batch`; Iced starts/stops
-  each as panels appear and drop.
+  *panel-local* `subscription()` into one stream via `Subscription::batch`,
+  plus a single workspace-level Clock tick gated on whether any Clock panel
+  exists. Iced starts/stops each as panels appear and drop.
+- The **app-root stores port**: `AppStores { counter: CounterStore, clock: ClockStore }`
+  is *defined* here but *owned* at app root (`OpenZone` in `main.rs`). The
+  workspace borrows `&mut AppStores` through its `update`; panels are views
+  over store handles.
 
 ## Layout vocabulary
 
 - **Pane** — a leaf of the center `pane_grid`. Splits happen *between* panes.
 - **PaneState** — a pane's tab stack: `{ tabs: Vec<Box<dyn Panel>>, active }`.
-  Tabs happen *within* a pane. Docks (a later slice) reuse this same type.
+  Tabs happen *within* a pane. Docks reuse this same type.
 - **PanelLocation** — addresses any panel unambiguously: `Center(pane_grid::Pane)`
-  today; `Dock(DockSide)` is added later without changing existing call sites.
+  or `Dock(DockSide)`.
 - **Tab strip** — the clickable row of tab labels at the top of each pane;
   the active tab is highlighted via the `Accent` foreground token.
 
 ## The `Panel` port contract (final)
 
 ```text
-title()        -> String              human-readable tab / title label
-kind()         -> PanelKind           stable identity for registry + persistence
-view()         -> Element<ErasedMessage>   render; messages erased at the boundary
-update(msg)    -> ()                  fold an erased message back into state
-subscription() -> Subscription<ErasedMessage>   optional external stream (default none)
-snapshot()     -> serde_json::Value   handle-only persistence (never full content)
+title()                  -> String                       human-readable label
+kind()                   -> PanelKind                    stable identity
+view(&stores)            -> Element<ErasedMessage>       view-over-handle render
+update(msg, &mut stores) -> ()                           fold intent; mutate self or store
+subscription()           -> Subscription<ErasedMessage>  panel-local stream (default none)
+snapshot(&stores)        -> serde_json::Value            handle-only persistence
+on_close(&mut stores)    -> ()                           release any store slot (default none)
 ```
+
+### View-over-handle
+
+Counter and Clock panels do **not** own domain data. A `CounterPanel` carries
+only a `CounterId`; a `ClockPanel` carries no per-instance state. Both read
+their canonical value from `AppStores` on every render. `view`, `update`,
+`snapshot`, and `on_close` all see the same store reference, so a frame is
+internally consistent with no caching layer in the panel.
+
+### Intent lifting
+
+Panel messages are *intents* (`CounterMessage::Increment`, etc.) erased at the
+trait boundary. The workspace reducer is the **single writer** of both layout
+state (via `&mut self`) and domain state (via `&mut AppStores`):
+
+1. A `WorkspaceMessage::Panel { location, tab, message }` arrives.
+2. The reducer addresses the live panel and calls `panel.update(message, &mut stores)`.
+3. The panel downcasts to its concrete intent and folds it — onto `self` for
+   panel-local UI state, onto `stores` for domain state. There is **no
+   interior mutability** anywhere; the whole path is `&mut`.
+
+### Single store-level Clock subscription
+
+The 1 Hz clock tick lives at the workspace layer, not on `ClockPanel`. The
+workspace's `subscription` checks `has_clock_panel()` and, if any Clock panel
+exists in the layout, batches in `iced::time::every(1s).map(|_| ClockTick)`.
+Each `ClockTick` folds into one `ClockStore::tick()`; every Clock panel
+re-renders against the same value (single-source fan-out). Removing the last
+Clock tab also removes the gating reason for the subscription, so Iced stops
+it without orphan streams.
 
 ### Message erasure
 
@@ -53,8 +89,7 @@ every panel **erases** its concrete message to `ErasedMessage`
 - Each panel downcasts at its own boundary and `debug_assert!`s on a failed
   downcast: misrouting is loud in development, a silent no-op in release.
 
-The workspace routes all panel messages through one path
-(`WorkspaceMessage::Panel { location, tab, message }`), so the panel that
+The workspace routes all panel messages through one path, so the panel that
 produced a message receives it back. A stale tag (panel since removed) is a
 no-op, never a panic.
 
@@ -90,9 +125,10 @@ would create contrived empty layers, so the shell is a flat top-level module.
 
 ## Build spine status
 
-This slice is **step 1 of 6** (single-window shell): `pane_grid` + one
-`PaneState`, tab strip, and Counter / Text / Clock as trivial `Panel` impls.
-Later slices add docks + commands (2), registry persistence round-trip (3),
-shared app-root stores + intent (4), multi-window (5), and full custom tab
+Slices **1–4 of 6** are landed: single-window shell with three dummies (1),
+edge docks + commands + panel-first key routing (2), handle-only layout
+persistence with the `PanelRegistry` rehydrate path (3), and **app-root
+stores + intent lifting + a single store-level Clock subscription** (this
+slice, 4). Later slices add multi-window polish (5) and full custom tab
 drag-and-drop (6). No real feature enters until the shell is proven with the
 three dummies.

@@ -12,6 +12,7 @@ use iced::{Element, Length};
 
 use crate::workspace::command::{Chord, KeyRef};
 use crate::workspace::panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
+use crate::workspace::stores::AppStores;
 
 /// Concrete message for the text panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,7 +62,7 @@ impl Panel for TextPanel {
         PanelKind::Text
     }
 
-    fn view(&self) -> Element<'_, ErasedMessage> {
+    fn view<'a>(&'a self, _stores: &'a AppStores) -> Element<'a, ErasedMessage> {
         let label = text("Type something:").size(16);
         let input = text_input("…", &self.content)
             .on_input(|value| erase(TextMessage::Changed(value)))
@@ -73,7 +74,7 @@ impl Panel for TextPanel {
             .into()
     }
 
-    fn update(&mut self, message: ErasedMessage) {
+    fn update(&mut self, message: ErasedMessage, _stores: &mut AppStores) {
         match downcast::<TextMessage>(message) {
             Some(message) => match &*message {
                 TextMessage::Changed(value) => self.content = value.clone(),
@@ -94,7 +95,7 @@ impl Panel for TextPanel {
         matches!(chord.key, KeyRef::Char(_) | KeyRef::Backspace)
     }
 
-    fn snapshot(&self) -> serde_json::Value {
+    fn snapshot(&self, _stores: &AppStores) -> serde_json::Value {
         serde_json::json!({ "content": self.content })
     }
 }
@@ -106,16 +107,24 @@ mod tests {
 
     #[test]
     fn change_updates_content() {
+        let mut stores = AppStores::new();
         let mut panel = TextPanel::new();
-        panel.update(erase(TextMessage::Changed(String::from("hello"))));
+        panel.update(
+            erase(TextMessage::Changed(String::from("hello"))),
+            &mut stores,
+        );
         assert_eq!(panel.content(), "hello");
     }
 
     #[test]
     fn snapshot_round_trips_through_constructor() {
+        let mut stores = AppStores::new();
         let mut panel = TextPanel::new();
-        panel.update(erase(TextMessage::Changed(String::from("draft"))));
-        let restored = TextPanel::from_snapshot(panel.snapshot());
+        panel.update(
+            erase(TextMessage::Changed(String::from("draft"))),
+            &mut stores,
+        );
+        let restored = TextPanel::from_snapshot(panel.snapshot(&stores));
         assert_eq!(restored.content(), "draft");
     }
 

@@ -29,8 +29,8 @@ use crate::features::onboarding::{
 };
 use crate::shared::design::ThemeMode;
 use crate::workspace::{
-    Chord, Docks, FileLayoutStore, LayoutStore, PaneState, Panel, PanelKind, PanelRegistry,
-    Workspace, WorkspaceMessage, chord_from_keyboard_event,
+    AppStores, Chord, Docks, FileLayoutStore, LayoutStore, PaneState, Panel, PanelKind,
+    PanelRegistry, Workspace, WorkspaceMessage, chord_from_keyboard_event,
 };
 
 fn main() -> iced::Result {
@@ -49,6 +49,7 @@ fn main() -> iced::Result {
                 onboarding_window: Some(onboarding_window),
                 workspace: None,
                 workspace_window: None,
+                stores: AppStores::new(),
                 persistence: persistence.clone(),
                 registry: build_registry(),
                 layout_store: layout_store.clone(),
@@ -70,11 +71,20 @@ fn main() -> iced::Result {
 /// Holds at most one onboarding window and one workspace window, each
 /// paired with the feature state it renders. A window id with no state
 /// (or vice versa) never occurs: they are set and cleared together.
+///
+/// `stores` is the app-root [`AppStores`] — the single owner of Counter
+/// and Clock state across the whole app. Workspace state lives in a
+/// sibling `workspace` field so the two split-borrow cleanly when the
+/// reducer runs.
 struct OpenZone {
     onboarding: Option<OnboardingState>,
     onboarding_window: Option<window::Id>,
     workspace: Option<Workspace>,
     workspace_window: Option<window::Id>,
+    /// App-root domain stores. Lives next to `workspace` so
+    /// `OpenZone::update` can split-borrow the two when handing
+    /// `&mut AppStores` to the workspace reducer.
+    stores: AppStores,
     persistence: Arc<dyn OnboardingPersistence>,
     /// The composition seam the shell uses to rehydrate panels from
     /// persisted handles. It knows panel kinds, not concrete types.
@@ -91,7 +101,10 @@ impl OpenZone {
             Message::Onboarding(message) => self.update_onboarding(message),
             Message::Workspace(message) => {
                 if let Some(workspace) = self.workspace.as_mut() {
-                    workspace.update(message);
+                    // Sibling-field split borrow: `workspace` and
+                    // `stores` are independent fields on `self`, so the
+                    // reducer can mutate both without aliasing.
+                    workspace.update(message, &mut self.stores);
                 }
                 Task::none()
             }
@@ -101,7 +114,7 @@ impl OpenZone {
                 if self.workspace_window == Some(window)
                     && let Some(workspace) = self.workspace.as_mut()
                 {
-                    workspace.update(WorkspaceMessage::Key(chord));
+                    workspace.update(WorkspaceMessage::Key(chord), &mut self.stores);
                 }
                 Task::none()
             }
@@ -147,11 +160,14 @@ impl OpenZone {
     }
 
     /// Restore the workspace from a persisted layout snapshot, or build
-    /// the seeded default when nothing valid is stored.
-    fn restore_or_build_workspace(&self) -> Workspace {
+    /// the seeded default when nothing valid is stored. Either path
+    /// allocates panel store slots through `&mut self.stores`.
+    fn restore_or_build_workspace(&mut self) -> Workspace {
         match self.layout_store.load() {
-            Some(snapshot) => workspace::restore(&snapshot, &self.registry, self.theme_mode),
-            None => build_workspace(self.theme_mode),
+            Some(snapshot) => {
+                workspace::restore(&snapshot, &self.registry, &mut self.stores, self.theme_mode)
+            }
+            None => build_workspace(&mut self.stores, self.theme_mode),
         }
     }
 
@@ -165,8 +181,11 @@ impl OpenZone {
         if self.workspace_window == Some(id) {
             // Persist the final layout before tearing the workspace down,
             // so the next launch restores splits, tabs, docks, and focus.
+            // Capture reads each panel's snapshot through the canonical
+            // store value so the persisted handle reflects the latest
+            // store state, not stale panel-side bookkeeping.
             if let Some(workspace) = self.workspace.as_ref() {
-                let snapshot = workspace::capture(workspace);
+                let snapshot = workspace::capture(workspace, &self.stores);
                 let _ = self.layout_store.save(&snapshot);
             }
             self.workspace_window = None;
@@ -190,7 +209,7 @@ impl OpenZone {
         if self.workspace_window == Some(window)
             && let Some(workspace) = &self.workspace
         {
-            return workspace::view::view(workspace).map(Message::Workspace);
+            return workspace::view::view(workspace, &self.stores).map(Message::Workspace);
         }
 
         // A window with no backing state (e.g. mid-close) renders empty.
@@ -324,33 +343,37 @@ impl LayoutStore for NoopLayoutStore {
 
 /// Register feature panel constructors. This table is the composition
 /// seam the shell uses to rehydrate panels; it knows kinds, not types.
+/// Each constructor receives `&mut AppStores` so a store-backed panel
+/// (Counter) can allocate its slot at rehydrate time.
 fn build_registry() -> PanelRegistry {
     let mut registry = PanelRegistry::new();
     registry
-        .register(PanelKind::Counter, |snapshot| {
-            Box::new(CounterPanel::from_snapshot(snapshot))
+        .register(PanelKind::Counter, |snapshot, stores| {
+            Box::new(CounterPanel::from_snapshot(snapshot, stores))
         })
-        .register(PanelKind::Text, |snapshot| {
+        .register(PanelKind::Text, |snapshot, _stores| {
             Box::new(TextPanel::from_snapshot(snapshot))
         })
-        .register(PanelKind::Clock, |snapshot| {
-            Box::new(ClockPanel::from_snapshot(snapshot))
+        .register(PanelKind::Clock, |snapshot, stores| {
+            Box::new(ClockPanel::from_snapshot(snapshot, stores))
         });
     registry
 }
 
 /// Build the workspace layout: one center pane hosting the dummy panels
 /// as tabs, with one dummy panel per edge dock so docks can be exercised.
-fn build_workspace(theme_mode: ThemeMode) -> Workspace {
+/// Every constructed Counter allocates a fresh [`AppStores::counter`]
+/// slot so each panel observes an independent count.
+fn build_workspace(stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace {
     let center_tabs: Vec<Box<dyn Panel>> = vec![
-        Box::new(CounterPanel::new()),
+        Box::new(CounterPanel::new(stores)),
         Box::new(TextPanel::new()),
         Box::new(ClockPanel::new()),
     ];
 
     let docks = Docks::new(
         PaneState::new(vec![Box::new(ClockPanel::new())]),
-        PaneState::new(vec![Box::new(CounterPanel::new())]),
+        PaneState::new(vec![Box::new(CounterPanel::new(stores))]),
         PaneState::new(vec![Box::new(TextPanel::new())]),
     );
 

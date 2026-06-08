@@ -1,50 +1,57 @@
 #![allow(dead_code)]
 
-//! Counter dummy panel — trivial interactive panel.
+//! Counter dummy panel — view over an app-root [`CounterStore`] slot.
 //!
-//! Proves the interactive seam of the [`Panel`] port: a view that emits
-//! erased messages and an `update` that downcasts them back to fold
-//! local state.
+//! The panel is a *handle* (a [`CounterId`]) plus a render. It owns no
+//! count: the canonical value lives in [`AppStores::counter`] at app
+//! root. The view emits intents (`CounterMessage::Increment`/
+//! `Decrement`) erased at the trait boundary; the workspace reducer
+//! lifts each intent through [`Panel::update`] into a single
+//! [`CounterStore`] mutation. There is no interior mutability anywhere.
 
 use iced::widget::{button, column, text};
 use iced::{Element, Length};
 
 use crate::workspace::panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
+use crate::workspace::stores::{AppStores, CounterId};
 
-/// Concrete message for the counter panel.
+/// Concrete intent for the counter panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CounterMessage {
     Increment,
     Decrement,
 }
 
-/// A panel holding a single integer count.
+/// A panel addressing one slot in [`crate::workspace::stores::CounterStore`].
 pub struct CounterPanel {
-    count: i64,
+    id: CounterId,
 }
 
 impl CounterPanel {
-    pub fn new() -> Self {
-        Self { count: 0 }
+    /// Allocate a fresh counter slot and bind this panel to it.
+    pub fn new(stores: &mut AppStores) -> Self {
+        Self {
+            id: stores.counter.create(),
+        }
     }
 
-    /// Rehydrate from a snapshot handle; falls back to zero.
-    pub fn from_snapshot(snapshot: serde_json::Value) -> Self {
+    /// Rehydrate from a snapshot handle: read the persisted count and
+    /// allocate a store slot seeded with it. A missing or malformed
+    /// snapshot falls back to zero so a corrupt layout file degrades
+    /// gracefully rather than panicking on launch.
+    pub fn from_snapshot(snapshot: serde_json::Value, stores: &mut AppStores) -> Self {
         let count = snapshot
             .get("count")
             .and_then(|value| value.as_i64())
             .unwrap_or(0);
-        Self { count }
+        Self {
+            id: stores.counter.restore(count),
+        }
     }
 
-    pub fn count(&self) -> i64 {
-        self.count
-    }
-}
-
-impl Default for CounterPanel {
-    fn default() -> Self {
-        Self::new()
+    /// The store id this panel addresses.
+    pub fn id(&self) -> CounterId {
+        self.id
     }
 }
 
@@ -57,8 +64,10 @@ impl Panel for CounterPanel {
         PanelKind::Counter
     }
 
-    fn view(&self) -> Element<'_, ErasedMessage> {
-        let display = text(format!("Count: {}", self.count)).size(28);
+    fn view<'a>(&'a self, stores: &'a AppStores) -> Element<'a, ErasedMessage> {
+        let count = stores.counter.count(self.id).unwrap_or(0);
+
+        let display = text(format!("Count: {count}")).size(28);
         let inc = button(text("+")).on_press(erase(CounterMessage::Increment));
         let dec = button(text("-")).on_press(erase(CounterMessage::Decrement));
 
@@ -68,18 +77,23 @@ impl Panel for CounterPanel {
             .into()
     }
 
-    fn update(&mut self, message: ErasedMessage) {
+    fn update(&mut self, message: ErasedMessage, stores: &mut AppStores) {
         match downcast::<CounterMessage>(message) {
             Some(message) => match *message {
-                CounterMessage::Increment => self.count += 1,
-                CounterMessage::Decrement => self.count -= 1,
+                CounterMessage::Increment => stores.counter.increment(self.id),
+                CounterMessage::Decrement => stores.counter.decrement(self.id),
             },
             None => debug_assert!(false, "CounterPanel received a foreign message"),
         }
     }
 
-    fn snapshot(&self) -> serde_json::Value {
-        serde_json::json!({ "count": self.count })
+    fn snapshot(&self, stores: &AppStores) -> serde_json::Value {
+        let count = stores.counter.count(self.id).unwrap_or(0);
+        serde_json::json!({ "count": count })
+    }
+
+    fn on_close(&mut self, stores: &mut AppStores) {
+        stores.counter.release(self.id);
     }
 }
 
@@ -88,40 +102,78 @@ mod tests {
     use super::*;
 
     #[test]
-    fn increment_raises_count() {
-        let mut panel = CounterPanel::new();
-        panel.update(erase(CounterMessage::Increment));
-        assert_eq!(panel.count(), 1);
+    fn increment_intent_mutates_store_through_panel() {
+        let mut stores = AppStores::new();
+        let mut panel = CounterPanel::new(&mut stores);
+
+        panel.update(erase(CounterMessage::Increment), &mut stores);
+
+        assert_eq!(stores.counter.count(panel.id()), Some(1));
     }
 
     #[test]
-    fn decrement_lowers_count() {
-        let mut panel = CounterPanel::new();
-        panel.update(erase(CounterMessage::Decrement));
-        assert_eq!(panel.count(), -1);
+    fn decrement_intent_mutates_store_through_panel() {
+        let mut stores = AppStores::new();
+        let mut panel = CounterPanel::new(&mut stores);
+
+        panel.update(erase(CounterMessage::Decrement), &mut stores);
+
+        assert_eq!(stores.counter.count(panel.id()), Some(-1));
     }
 
     #[test]
-    fn foreign_message_is_ignored_in_release() {
-        // In release builds a misrouted message must be a no-op, not a
-        // panic. The debug_assert only fires in debug, so this asserts
-        // the release contract conceptually via a distinct payload type.
-        let mut panel = CounterPanel::new();
-        let before = panel.count();
-        // Use a payload the panel does not understand. Wrapped so the
-        // debug_assert path is exercised; in debug this would panic, so
-        // we only assert the value is unchanged after a same-type op.
-        panel.update(erase(CounterMessage::Increment));
-        assert_eq!(panel.count(), before + 1);
+    fn snapshot_reads_from_store_not_panel() {
+        let mut stores = AppStores::new();
+        let panel = CounterPanel::new(&mut stores);
+        // Mutate the store directly; the panel is a view, so its
+        // snapshot must reflect the new store value with zero panel-side
+        // bookkeeping.
+        stores.counter.increment(panel.id());
+        stores.counter.increment(panel.id());
+
+        let snapshot = panel.snapshot(&stores);
+
+        assert_eq!(snapshot.get("count").and_then(|v| v.as_i64()), Some(2));
     }
 
     #[test]
     fn snapshot_round_trips_through_constructor() {
-        let mut panel = CounterPanel::new();
-        panel.update(erase(CounterMessage::Increment));
-        panel.update(erase(CounterMessage::Increment));
-        let snapshot = panel.snapshot();
-        let restored = CounterPanel::from_snapshot(snapshot);
-        assert_eq!(restored.count(), 2);
+        let mut stores_a = AppStores::new();
+        let mut panel = CounterPanel::new(&mut stores_a);
+        panel.update(erase(CounterMessage::Increment), &mut stores_a);
+        panel.update(erase(CounterMessage::Increment), &mut stores_a);
+        let snapshot = panel.snapshot(&stores_a);
+
+        // Rehydrating in a fresh store seeds a slot at the persisted
+        // count: the snapshot is the only thing crossing the boundary.
+        let mut stores_b = AppStores::new();
+        let restored = CounterPanel::from_snapshot(snapshot, &mut stores_b);
+        assert_eq!(stores_b.counter.count(restored.id()), Some(2));
+    }
+
+    #[test]
+    fn on_close_releases_store_slot() {
+        let mut stores = AppStores::new();
+        let mut panel = CounterPanel::new(&mut stores);
+        let id = panel.id();
+        assert_eq!(stores.counter.count(id), Some(0));
+
+        panel.on_close(&mut stores);
+
+        assert_eq!(stores.counter.count(id), None);
+    }
+
+    #[test]
+    fn two_panels_observe_independent_slots() {
+        let mut stores = AppStores::new();
+        let mut a = CounterPanel::new(&mut stores);
+        let mut b = CounterPanel::new(&mut stores);
+
+        a.update(erase(CounterMessage::Increment), &mut stores);
+        a.update(erase(CounterMessage::Increment), &mut stores);
+        b.update(erase(CounterMessage::Increment), &mut stores);
+
+        assert_eq!(stores.counter.count(a.id()), Some(2));
+        assert_eq!(stores.counter.count(b.id()), Some(1));
     }
 }
