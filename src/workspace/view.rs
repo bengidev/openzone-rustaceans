@@ -8,12 +8,12 @@
 //! render as minimal rails. All styling resolves through
 //! `shared::design` tokens — no hardcoded colors or sizes.
 
-use iced::widget::{PaneGrid, button, column, container, pane_grid, row, space, text};
+use iced::widget::{PaneGrid, button, column, container, mouse_area, pane_grid, row, space, text};
 use iced::{Background, Border, Color, Element, Length};
 
 use crate::shared::design::{
     BackgroundToken, BorderToken, ForegroundToken, OpenZoneTheme, RadiusToken, SpacingToken,
-    TypeRole,
+    ThemeMode, TypeRole,
 };
 use crate::workspace::dock::Dock;
 use crate::workspace::location::{DockSide, PanelLocation};
@@ -38,17 +38,17 @@ pub fn view(workspace: &Workspace) -> Element<'_, WorkspaceMessage> {
     ]
     .width(Length::Fill)
     .height(Length::Fill)
-    .spacing(SpacingToken::S2.value());
+    .spacing(SpacingToken::Hairline.value());
 
     let body = column![main_row, dock_bottom(workspace, theme)]
         .width(Length::Fill)
         .height(Length::Fill)
-        .spacing(SpacingToken::S2.value());
+        .spacing(SpacingToken::Hairline.value());
 
     let framed = container(body)
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(SpacingToken::S3.value())
+        .padding(SpacingToken::Hairline.value())
         .style(move |_| surface_style(theme, BackgroundToken::Primary));
 
     column![title_bar(theme), framed, status_bar(theme, workspace)]
@@ -67,7 +67,8 @@ fn center_pane_grid(workspace: &Workspace, theme: OpenZoneTheme) -> Element<'_, 
         .width(Length::Fill)
         .height(Length::Fill)
         .spacing(SpacingToken::S2.value())
-        .on_click(WorkspaceMessage::PaneClicked);
+        .on_click(WorkspaceMessage::PaneClicked)
+        .on_drag(WorkspaceMessage::PaneDragged);
 
     container(grid)
         .width(Length::Fill)
@@ -89,7 +90,7 @@ fn dock_side(
     }
 
     if dock.open {
-        let body = pane_body(theme, location, &dock.tabs, focused);
+        let body = focus_on_click(pane_body(theme, location, &dock.tabs, focused), location);
         return container(body)
             .width(Length::Fixed(SIDE_DOCK_WIDTH))
             .height(Length::Fill)
@@ -119,7 +120,7 @@ fn dock_bottom(workspace: &Workspace, theme: OpenZoneTheme) -> Element<'_, Works
     }
 
     if dock.open {
-        let body = pane_body(theme, location, &dock.tabs, focused);
+        let body = focus_on_click(pane_body(theme, location, &dock.tabs, focused), location);
         return container(body)
             .width(Length::Fill)
             .height(Length::Fixed(BOTTOM_DOCK_HEIGHT))
@@ -184,7 +185,30 @@ fn title_bar(theme: OpenZoneTheme) -> Element<'static, WorkspaceMessage> {
             color: Some(theme.foreground(ForegroundToken::Primary)),
         });
 
-    container(label)
+    let toggle_label = match theme.mode {
+        ThemeMode::Dark => "Light",
+        ThemeMode::Light => "Dark",
+    };
+
+    let theme_toggle = button(
+        text(toggle_label)
+            .size(TypeRole::LabelMd.size())
+            .style(move |_| text::Style {
+                color: Some(theme.foreground(ForegroundToken::Secondary)),
+            }),
+    )
+    .padding([
+        SpacingToken::S1.value() as u16,
+        SpacingToken::S3.value() as u16,
+    ])
+    .on_press(WorkspaceMessage::ToggleTheme)
+    .style(move |_, _| tab_button_style(theme, false));
+
+    let bar = row![label, space::horizontal().width(Length::Fill), theme_toggle,]
+        .align_y(iced::Alignment::Center)
+        .width(Length::Fill);
+
+    container(bar)
         .width(Length::Fill)
         .padding(SpacingToken::S3.value())
         .style(move |_| bar_style(theme, BackgroundToken::Elevated))
@@ -225,6 +249,21 @@ fn status_bar(theme: OpenZoneTheme, workspace: &Workspace) -> Element<'_, Worksp
         .width(Length::Fill)
         .padding(SpacingToken::S2.value())
         .style(move |_| bar_style(theme, BackgroundToken::Secondary))
+        .into()
+}
+
+/// Wrap a dock body so a click anywhere in it moves focus to that dock.
+///
+/// `pane_grid` already focuses center panes on body-click via its own
+/// `on_click`, but docks are plain containers. A `MouseArea` lets inner
+/// widgets (tab buttons, panel controls) handle the press first and only
+/// then publishes the focus message, so nothing inside is shadowed.
+fn focus_on_click<'a>(
+    body: Element<'a, WorkspaceMessage>,
+    location: PanelLocation,
+) -> Element<'a, WorkspaceMessage> {
+    mouse_area(body)
+        .on_press(WorkspaceMessage::DockFocused(location))
         .into()
 }
 
@@ -330,7 +369,7 @@ fn bar_style(theme: OpenZoneTheme, token: BackgroundToken) -> container::Style {
         border: Border {
             color: theme.border(BorderToken::Default),
             width: 1.0,
-            radius: RadiusToken::Xs.value().into(),
+            radius: 0.0.into(),
         },
         ..container::Style::default()
     }
@@ -348,7 +387,7 @@ fn pane_frame_style(theme: OpenZoneTheme, border_token: BorderToken) -> containe
             } else {
                 1.0
             },
-            radius: RadiusToken::Md.value().into(),
+            radius: RadiusToken::Xs.value().into(),
         },
         ..container::Style::default()
     }
@@ -370,7 +409,7 @@ fn tab_button_style(theme: OpenZoneTheme, active: bool) -> button::Style {
         border: Border {
             color: theme.border(BorderToken::Subtle),
             width: if active { 1.0 } else { 0.0 },
-            radius: RadiusToken::Sm.value().into(),
+            radius: RadiusToken::Xs.value().into(),
         },
         ..button::Style::default()
     }

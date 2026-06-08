@@ -1,22 +1,282 @@
 //! OpenZone Rustaceans — composition root.
 //!
 //! This binary composes internal modules, chooses infrastructure, and
-//! launches the Iced application. It is the one place that names
-//! concrete feature panels and wires them into the shell registry; the
-//! workspace shell itself never depends on a concrete feature.
+//! launches the Iced runtime as a multi-window **daemon**. It is the one
+//! place that names concrete feature panels and wires them into the
+//! shell registry; the workspace shell itself never depends on a
+//! concrete feature.
+//!
+//! Window model: the app boots showing the onboarding window. When the
+//! user presses *Enter OpenZone*, the workspace opens in its own,
+//! separate OS window and the onboarding window closes (clean handoff).
+//! Onboarding is never overridden in place.
 
 mod features;
 mod shared;
 mod workspace;
 
+use std::sync::Arc;
+
+use iced::event::{self, Event};
+use iced::{Element, Size, Subscription, Task, Theme, window};
+
 use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
+use crate::features::onboarding::infrastructure::file_persistence::FileOnboardingPersistence;
+use crate::features::onboarding::infrastructure::memory_persistence::InMemoryOnboardingPersistence;
+use crate::features::onboarding::{
+    OnboardingMessage, OnboardingOutcome, OnboardingPersistence, OnboardingState, mark_completed,
+    view as onboarding_view,
+};
 use crate::shared::design::ThemeMode;
-use crate::workspace::{Docks, PaneState, Panel, PanelKind, PanelRegistry};
+use crate::workspace::{
+    Chord, Docks, PaneState, Panel, PanelKind, PanelRegistry, Workspace, WorkspaceMessage,
+    chord_from_keyboard_event,
+};
 
 fn main() -> iced::Result {
-    // Register feature panel constructors. This table is the
-    // composition seam the shell uses to rehydrate panels (persistence,
-    // later dynamic open). The shell knows kinds, not concrete types.
+    let persistence = load_persistence();
+    let theme_mode = ThemeMode::Dark;
+
+    iced::daemon(
+        move || {
+            // Boot opens the onboarding window. The daemon owns no window
+            // until we ask for one, so the first `window::open` is what
+            // makes anything visible.
+            let (onboarding_window, open) = window::open(onboarding_window_settings());
+            let app = OpenZone {
+                onboarding: Some(OnboardingState::new(persistence.clone(), theme_mode)),
+                onboarding_window: Some(onboarding_window),
+                workspace: None,
+                workspace_window: None,
+                persistence: persistence.clone(),
+                registry: build_registry(),
+                theme_mode,
+            };
+            (app, open.discard())
+        },
+        OpenZone::update,
+        OpenZone::view,
+    )
+    .title(OpenZone::title)
+    .subscription(OpenZone::subscription)
+    .theme(OpenZone::theme)
+    .run()
+}
+
+/// The top-level multi-window application state.
+///
+/// Holds at most one onboarding window and one workspace window, each
+/// paired with the feature state it renders. A window id with no state
+/// (or vice versa) never occurs: they are set and cleared together.
+struct OpenZone {
+    onboarding: Option<OnboardingState>,
+    onboarding_window: Option<window::Id>,
+    workspace: Option<Workspace>,
+    workspace_window: Option<window::Id>,
+    persistence: Arc<dyn OnboardingPersistence>,
+    /// Retained for later slices (persistence rehydrate, dynamic panel
+    /// open). The shell knows panel kinds, not concrete types.
+    #[allow(dead_code)]
+    registry: PanelRegistry,
+    theme_mode: ThemeMode,
+}
+
+impl OpenZone {
+    fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::Onboarding(message) => self.update_onboarding(message),
+            Message::Workspace(message) => {
+                if let Some(workspace) = self.workspace.as_mut() {
+                    workspace.update(message);
+                }
+                Task::none()
+            }
+            Message::Key { window, chord } => {
+                // Keyboard events fire for whichever window is focused;
+                // only the workspace window routes chords into the shell.
+                if self.workspace_window == Some(window)
+                    && let Some(workspace) = self.workspace.as_mut()
+                {
+                    workspace.update(WorkspaceMessage::Key(chord));
+                }
+                Task::none()
+            }
+            Message::WindowClosed(id) => self.handle_window_closed(id),
+        }
+    }
+
+    /// Fold an onboarding message; on completion, hand off to a new
+    /// workspace window.
+    fn update_onboarding(&mut self, message: OnboardingMessage) -> Task<Message> {
+        let Some(onboarding) = self.onboarding.as_mut() else {
+            return Task::none();
+        };
+
+        match onboarding.update(message) {
+            OnboardingOutcome::Completed | OnboardingOutcome::Skipped => {
+                let _ = mark_completed(&self.persistence);
+                self.enter_workspace()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// Open the workspace in its own dedicated window and close the
+    /// onboarding window. The workspace does not replace onboarding in
+    /// place — it is a genuinely separate OS window.
+    fn enter_workspace(&mut self) -> Task<Message> {
+        let (workspace_window, open) = window::open(workspace_window_settings());
+        self.workspace_window = Some(workspace_window);
+        self.workspace = Some(build_workspace(self.theme_mode));
+
+        let close = match self.onboarding_window.take() {
+            Some(onboarding_window) => {
+                self.onboarding = None;
+                window::close(onboarding_window)
+            }
+            None => Task::none(),
+        };
+
+        Task::batch([open.discard(), close])
+    }
+
+    /// React to a window the user (or our own handoff) closed. When no
+    /// windows remain, the daemon has nothing left to show, so exit.
+    fn handle_window_closed(&mut self, id: window::Id) -> Task<Message> {
+        if self.onboarding_window == Some(id) {
+            self.onboarding_window = None;
+            self.onboarding = None;
+        }
+        if self.workspace_window == Some(id) {
+            self.workspace_window = None;
+            self.workspace = None;
+        }
+
+        if self.onboarding_window.is_none() && self.workspace_window.is_none() {
+            iced::exit()
+        } else {
+            Task::none()
+        }
+    }
+
+    fn view(&self, window: window::Id) -> Element<'_, Message> {
+        if self.onboarding_window == Some(window)
+            && let Some(onboarding) = &self.onboarding
+        {
+            return onboarding_view(onboarding).map(Message::Onboarding);
+        }
+
+        if self.workspace_window == Some(window)
+            && let Some(workspace) = &self.workspace
+        {
+            return workspace::view::view(workspace).map(Message::Workspace);
+        }
+
+        // A window with no backing state (e.g. mid-close) renders empty.
+        iced::widget::container(iced::widget::Space::new())
+            .width(iced::Length::Fill)
+            .height(iced::Length::Fill)
+            .into()
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        let mut streams: Vec<Subscription<Message>> = Vec::new();
+
+        if let Some(onboarding) = &self.onboarding {
+            streams.push(onboarding.subscription().map(Message::Onboarding));
+        }
+
+        if let Some(workspace) = &self.workspace {
+            streams.push(workspace.subscription().map(Message::Workspace));
+            streams.push(event::listen_with(workspace_key_event));
+        }
+
+        streams.push(window::close_events().map(Message::WindowClosed));
+
+        Subscription::batch(streams)
+    }
+
+    fn title(&self, _window: window::Id) -> String {
+        String::from("OpenZone")
+    }
+
+    fn theme(&self, window: window::Id) -> Theme {
+        let mode = if self.workspace_window == Some(window) {
+            self.workspace
+                .as_ref()
+                .map(|workspace| workspace.theme_mode)
+                .unwrap_or(self.theme_mode)
+        } else {
+            self.onboarding
+                .as_ref()
+                .map(|onboarding| onboarding.theme_mode)
+                .unwrap_or(self.theme_mode)
+        };
+
+        match mode {
+            ThemeMode::Dark => Theme::Dark,
+            ThemeMode::Light => Theme::Light,
+        }
+    }
+}
+
+/// Top-level message: feature messages tagged by origin, plus the
+/// window-lifecycle and per-window keyboard events the daemon needs.
+#[derive(Debug, Clone)]
+enum Message {
+    Onboarding(OnboardingMessage),
+    Workspace(WorkspaceMessage),
+    /// A key chord, tagged with the window that produced it so the
+    /// reducer can route it only to the workspace window.
+    Key {
+        window: window::Id,
+        chord: Chord,
+    },
+    WindowClosed(window::Id),
+}
+
+/// Convert a raw window event into a tagged key chord message. Must be a
+/// plain `fn` (no captures) because `event::listen_with` takes a function
+/// pointer; the window id is carried in the message instead of captured.
+fn workspace_key_event(
+    event: Event,
+    _status: event::Status,
+    window: window::Id,
+) -> Option<Message> {
+    match event {
+        Event::Keyboard(keyboard) => {
+            chord_from_keyboard_event(&keyboard).map(|chord| Message::Key { window, chord })
+        }
+        _ => None,
+    }
+}
+
+fn onboarding_window_settings() -> window::Settings {
+    window::Settings {
+        size: Size::new(960.0, 680.0),
+        ..window::Settings::default()
+    }
+}
+
+fn workspace_window_settings() -> window::Settings {
+    window::Settings {
+        size: Size::new(1100.0, 760.0),
+        ..window::Settings::default()
+    }
+}
+
+/// Pick the production persistence backend, degrading to in-memory only
+/// if the OS data directory cannot be resolved.
+fn load_persistence() -> Arc<dyn OnboardingPersistence> {
+    match FileOnboardingPersistence::from_project_dirs() {
+        Ok(store) => Arc::new(store),
+        Err(_) => Arc::new(InMemoryOnboardingPersistence::new()),
+    }
+}
+
+/// Register feature panel constructors. This table is the composition
+/// seam the shell uses to rehydrate panels; it knows kinds, not types.
+fn build_registry() -> PanelRegistry {
     let mut registry = PanelRegistry::new();
     registry
         .register(PanelKind::Counter, |snapshot| {
@@ -28,29 +288,23 @@ fn main() -> iced::Result {
         .register(PanelKind::Clock, |snapshot| {
             Box::new(ClockPanel::from_snapshot(snapshot))
         });
+    registry
+}
 
-    // One center pane hosting the three dummy panels as tabs. Wrapped
-    // in a factory because the shell's boot closure may run more than
-    // once; each boot constructs fresh panels.
-    let build_pane = || {
-        let tabs: Vec<Box<dyn Panel>> = vec![
-            Box::new(CounterPanel::new()),
-            Box::new(TextPanel::new()),
-            Box::new(ClockPanel::new()),
-        ];
-        PaneState::new(tabs)
-    };
+/// Build the workspace layout: one center pane hosting the dummy panels
+/// as tabs, with one dummy panel per edge dock so docks can be exercised.
+fn build_workspace(theme_mode: ThemeMode) -> Workspace {
+    let center_tabs: Vec<Box<dyn Panel>> = vec![
+        Box::new(CounterPanel::new()),
+        Box::new(TextPanel::new()),
+        Box::new(ClockPanel::new()),
+    ];
 
-    // Each dock side hosts one dummy panel so dock toggle and focus can
-    // be exercised on launch. Wrapped in a factory for the same boot
-    // closure reasons as the center pane.
-    let build_docks = || {
-        Docks::new(
-            PaneState::new(vec![Box::new(ClockPanel::new())]),
-            PaneState::new(vec![Box::new(CounterPanel::new())]),
-            PaneState::new(vec![Box::new(TextPanel::new())]),
-        )
-    };
+    let docks = Docks::new(
+        PaneState::new(vec![Box::new(ClockPanel::new())]),
+        PaneState::new(vec![Box::new(CounterPanel::new())]),
+        PaneState::new(vec![Box::new(TextPanel::new())]),
+    );
 
-    workspace::run(build_pane, build_docks, registry, ThemeMode::Dark)
+    Workspace::with_docks(PaneState::new(center_tabs), docks, theme_mode)
 }

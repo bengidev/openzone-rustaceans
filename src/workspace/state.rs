@@ -104,6 +104,16 @@ impl Workspace {
             }
             WorkspaceMessage::Key(chord) => self.handle_key(chord),
             WorkspaceMessage::Command(command) => self.apply_command(command),
+            WorkspaceMessage::ToggleTheme => {
+                self.theme_mode = self.theme_mode.toggle();
+                self.theme = OpenZoneTheme::from_mode(self.theme_mode);
+            }
+            WorkspaceMessage::PaneDragged(event) => {
+                if let pane_grid::DragEvent::Dropped { pane, target } = event {
+                    self.panes.drop(pane, target);
+                    self.focused = PanelLocation::Center(pane);
+                }
+            }
         }
     }
 
