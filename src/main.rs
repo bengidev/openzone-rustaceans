@@ -29,12 +29,13 @@ use crate::features::onboarding::{
 };
 use crate::shared::design::ThemeMode;
 use crate::workspace::{
-    Chord, Docks, PaneState, Panel, PanelKind, PanelRegistry, Workspace, WorkspaceMessage,
-    chord_from_keyboard_event,
+    Chord, Docks, FileLayoutStore, LayoutStore, PaneState, Panel, PanelKind, PanelRegistry,
+    Workspace, WorkspaceMessage, chord_from_keyboard_event,
 };
 
 fn main() -> iced::Result {
     let persistence = load_persistence();
+    let layout_store = load_layout_store();
     let theme_mode = ThemeMode::Dark;
 
     iced::daemon(
@@ -50,6 +51,7 @@ fn main() -> iced::Result {
                 workspace_window: None,
                 persistence: persistence.clone(),
                 registry: build_registry(),
+                layout_store: layout_store.clone(),
                 theme_mode,
             };
             (app, open.discard())
@@ -74,10 +76,12 @@ struct OpenZone {
     workspace: Option<Workspace>,
     workspace_window: Option<window::Id>,
     persistence: Arc<dyn OnboardingPersistence>,
-    /// Retained for later slices (persistence rehydrate, dynamic panel
-    /// open). The shell knows panel kinds, not concrete types.
-    #[allow(dead_code)]
+    /// The composition seam the shell uses to rehydrate panels from
+    /// persisted handles. It knows panel kinds, not concrete types.
     registry: PanelRegistry,
+    /// Layout persistence: a saved snapshot is restored when entering the
+    /// workspace and a fresh one is written when its window closes.
+    layout_store: Arc<dyn LayoutStore>,
     theme_mode: ThemeMode,
 }
 
@@ -123,11 +127,13 @@ impl OpenZone {
 
     /// Open the workspace in its own dedicated window and close the
     /// onboarding window. The workspace does not replace onboarding in
-    /// place — it is a genuinely separate OS window.
+    /// place — it is a genuinely separate OS window. A previously saved
+    /// layout is restored through the registry; absent or unreadable,
+    /// the shell falls back to its seeded default layout.
     fn enter_workspace(&mut self) -> Task<Message> {
         let (workspace_window, open) = window::open(workspace_window_settings());
         self.workspace_window = Some(workspace_window);
-        self.workspace = Some(build_workspace(self.theme_mode));
+        self.workspace = Some(self.restore_or_build_workspace());
 
         let close = match self.onboarding_window.take() {
             Some(onboarding_window) => {
@@ -140,6 +146,15 @@ impl OpenZone {
         Task::batch([open.discard(), close])
     }
 
+    /// Restore the workspace from a persisted layout snapshot, or build
+    /// the seeded default when nothing valid is stored.
+    fn restore_or_build_workspace(&self) -> Workspace {
+        match self.layout_store.load() {
+            Some(snapshot) => workspace::restore(&snapshot, &self.registry, self.theme_mode),
+            None => build_workspace(self.theme_mode),
+        }
+    }
+
     /// React to a window the user (or our own handoff) closed. When no
     /// windows remain, the daemon has nothing left to show, so exit.
     fn handle_window_closed(&mut self, id: window::Id) -> Task<Message> {
@@ -148,6 +163,12 @@ impl OpenZone {
             self.onboarding = None;
         }
         if self.workspace_window == Some(id) {
+            // Persist the final layout before tearing the workspace down,
+            // so the next launch restores splits, tabs, docks, and focus.
+            if let Some(workspace) = self.workspace.as_ref() {
+                let snapshot = workspace::capture(workspace);
+                let _ = self.layout_store.save(&snapshot);
+            }
             self.workspace_window = None;
             self.workspace = None;
         }
@@ -271,6 +292,33 @@ fn load_persistence() -> Arc<dyn OnboardingPersistence> {
     match FileOnboardingPersistence::from_project_dirs() {
         Ok(store) => Arc::new(store),
         Err(_) => Arc::new(InMemoryOnboardingPersistence::new()),
+    }
+}
+
+/// Pick the layout-persistence backend. If the OS data directory cannot
+/// be resolved, fall back to a no-op store so the shell still launches
+/// (it just won't remember layout across runs).
+fn load_layout_store() -> Arc<dyn LayoutStore> {
+    match FileLayoutStore::from_project_dirs() {
+        Ok(store) => Arc::new(store),
+        Err(_) => Arc::new(NoopLayoutStore),
+    }
+}
+
+/// A layout store that persists nothing. Used only when no data
+/// directory is available; `load` always yields the seeded default.
+struct NoopLayoutStore;
+
+impl LayoutStore for NoopLayoutStore {
+    fn load(&self) -> Option<workspace::LayoutSnapshot> {
+        None
+    }
+
+    fn save(
+        &self,
+        _snapshot: &workspace::LayoutSnapshot,
+    ) -> Result<(), workspace::LayoutStoreError> {
+        Ok(())
     }
 }
 

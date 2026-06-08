@@ -12,6 +12,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use iced::{Element, Subscription};
+use serde::{Deserialize, Serialize};
 
 use crate::workspace::command::Chord;
 
@@ -30,7 +31,7 @@ pub type ErasedMessage = Arc<dyn Any + Send + Sync>;
 /// snapshot is meaningless without the kind that knows how to rehydrate
 /// it). This enum is the one place the shell enumerates known panel
 /// kinds; panels themselves are trait objects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PanelKind {
     Counter,
     Text,

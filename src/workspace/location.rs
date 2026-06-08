@@ -9,13 +9,14 @@
 //! panel abstractions as the center.
 
 use iced::widget::pane_grid;
+use serde::{Deserialize, Serialize};
 
 /// One of the three collapsible edge docks.
 ///
 /// Docks frame the center workspace: `Left` and `Right` flank it as
 /// vertical rails, `Bottom` spans beneath it. The top edge is reserved
 /// for application chrome (title bar), so there is no top dock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DockSide {
     Left,
     Right,

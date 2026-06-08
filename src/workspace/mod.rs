@@ -18,20 +18,24 @@
 
 pub mod command;
 pub mod dock;
+pub mod layout_store;
 pub mod location;
 pub mod message;
 pub mod pane_state;
 pub mod panel;
+pub mod persistence;
 pub mod registry;
 pub mod state;
 pub mod view;
 
 pub use command::{Chord, Command, KeyRef, Keymap, Mods, chord_from_keyboard_event};
 pub use dock::{Dock, Docks};
+pub use layout_store::{FileLayoutStore, LayoutStore, LayoutStoreError};
 pub use location::{DockSide, PanelLocation};
 pub use message::WorkspaceMessage;
 pub use pane_state::PaneState;
 pub use panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
+pub use persistence::{LayoutSnapshot, capture, restore};
 pub use registry::{PanelConstructor, PanelRegistry};
 pub use state::Workspace;
 
