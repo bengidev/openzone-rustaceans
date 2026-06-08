@@ -8,7 +8,7 @@
 //! render as minimal rails. All styling resolves through
 //! `shared::design` tokens — no hardcoded colors or sizes.
 
-use iced::widget::{PaneGrid, button, column, container, pane_grid, row, space, text};
+use iced::widget::{PaneGrid, button, column, container, mouse_area, pane_grid, row, space, text};
 use iced::{Background, Border, Color, Element, Length};
 
 use crate::shared::design::{
@@ -89,7 +89,7 @@ fn dock_side(
     }
 
     if dock.open {
-        let body = pane_body(theme, location, &dock.tabs, focused);
+        let body = focus_on_click(pane_body(theme, location, &dock.tabs, focused), location);
         return container(body)
             .width(Length::Fixed(SIDE_DOCK_WIDTH))
             .height(Length::Fill)
@@ -119,7 +119,7 @@ fn dock_bottom(workspace: &Workspace, theme: OpenZoneTheme) -> Element<'_, Works
     }
 
     if dock.open {
-        let body = pane_body(theme, location, &dock.tabs, focused);
+        let body = focus_on_click(pane_body(theme, location, &dock.tabs, focused), location);
         return container(body)
             .width(Length::Fill)
             .height(Length::Fixed(BOTTOM_DOCK_HEIGHT))
@@ -252,6 +252,21 @@ fn status_bar(theme: OpenZoneTheme, workspace: &Workspace) -> Element<'_, Worksp
         .width(Length::Fill)
         .padding(SpacingToken::S2.value())
         .style(move |_| bar_style(theme, BackgroundToken::Secondary))
+        .into()
+}
+
+/// Wrap a dock body so a click anywhere in it moves focus to that dock.
+///
+/// `pane_grid` already focuses center panes on body-click via its own
+/// `on_click`, but docks are plain containers. A `MouseArea` lets inner
+/// widgets (tab buttons, panel controls) handle the press first and only
+/// then publishes the focus message, so nothing inside is shadowed.
+fn focus_on_click<'a>(
+    body: Element<'a, WorkspaceMessage>,
+    location: PanelLocation,
+) -> Element<'a, WorkspaceMessage> {
+    mouse_area(body)
+        .on_press(WorkspaceMessage::DockFocused(location))
         .into()
 }
 
