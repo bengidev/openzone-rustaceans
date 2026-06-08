@@ -36,6 +36,9 @@ pub enum WorkspaceMessage {
     /// A resolved workspace command (from a keymap hit, a menu, or a
     /// future command palette). Dispatched straight to `apply_command`.
     Command(Command),
+    /// Flip the workspace between light and dark mode. Repaints this
+    /// window via the daemon's per-window `theme` callback.
+    ToggleTheme,
 }
 
 impl std::fmt::Debug for WorkspaceMessage {
@@ -60,6 +63,7 @@ impl std::fmt::Debug for WorkspaceMessage {
             }
             WorkspaceMessage::Key(chord) => f.debug_tuple("Key").field(chord).finish(),
             WorkspaceMessage::Command(command) => f.debug_tuple("Command").field(command).finish(),
+            WorkspaceMessage::ToggleTheme => f.debug_tuple("ToggleTheme").finish(),
         }
     }
 }

@@ -104,6 +104,10 @@ impl Workspace {
             }
             WorkspaceMessage::Key(chord) => self.handle_key(chord),
             WorkspaceMessage::Command(command) => self.apply_command(command),
+            WorkspaceMessage::ToggleTheme => {
+                self.theme_mode = self.theme_mode.toggle();
+                self.theme = OpenZoneTheme::from_mode(self.theme_mode);
+            }
         }
     }
 

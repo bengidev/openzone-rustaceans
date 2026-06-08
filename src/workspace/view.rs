@@ -13,7 +13,7 @@ use iced::{Background, Border, Color, Element, Length};
 
 use crate::shared::design::{
     BackgroundToken, BorderToken, ForegroundToken, OpenZoneTheme, RadiusToken, SpacingToken,
-    TypeRole,
+    ThemeMode, TypeRole,
 };
 use crate::workspace::dock::Dock;
 use crate::workspace::location::{DockSide, PanelLocation};
@@ -184,7 +184,34 @@ fn title_bar(theme: OpenZoneTheme) -> Element<'static, WorkspaceMessage> {
             color: Some(theme.foreground(ForegroundToken::Primary)),
         });
 
-    container(label)
+    let toggle_label = match theme.mode {
+        ThemeMode::Dark => "Light",
+        ThemeMode::Light => "Dark",
+    };
+
+    let theme_toggle = button(
+        text(toggle_label)
+            .size(TypeRole::LabelMd.size())
+            .style(move |_| text::Style {
+                color: Some(theme.foreground(ForegroundToken::Secondary)),
+            }),
+    )
+    .padding([
+        SpacingToken::S1.value() as u16,
+        SpacingToken::S3.value() as u16,
+    ])
+    .on_press(WorkspaceMessage::ToggleTheme)
+    .style(move |_, _| tab_button_style(theme, false));
+
+    let bar = row![
+        label,
+        space::horizontal().width(Length::Fill),
+        theme_toggle,
+    ]
+    .align_y(iced::Alignment::Center)
+    .width(Length::Fill);
+
+    container(bar)
         .width(Length::Fill)
         .padding(SpacingToken::S3.value())
         .style(move |_| bar_style(theme, BackgroundToken::Elevated))
