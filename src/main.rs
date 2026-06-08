@@ -11,7 +11,7 @@ mod workspace;
 
 use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
 use crate::shared::design::ThemeMode;
-use crate::workspace::{PaneState, Panel, PanelKind, PanelRegistry};
+use crate::workspace::{Docks, PaneState, Panel, PanelKind, PanelRegistry};
 
 fn main() -> iced::Result {
     // Register feature panel constructors. This table is the
@@ -41,5 +41,16 @@ fn main() -> iced::Result {
         PaneState::new(tabs)
     };
 
-    workspace::run(build_pane, registry, ThemeMode::Dark)
+    // Each dock side hosts one dummy panel so dock toggle and focus can
+    // be exercised on launch. Wrapped in a factory for the same boot
+    // closure reasons as the center pane.
+    let build_docks = || {
+        Docks::new(
+            PaneState::new(vec![Box::new(ClockPanel::new())]),
+            PaneState::new(vec![Box::new(CounterPanel::new())]),
+            PaneState::new(vec![Box::new(TextPanel::new())]),
+        )
+    };
+
+    workspace::run(build_pane, build_docks, registry, ThemeMode::Dark)
 }

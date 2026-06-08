@@ -2,13 +2,15 @@
 
 //! Text dummy panel — text-input panel.
 //!
-//! Proves a panel can host an interactive input widget. Widget focus
-//! nesting under workspace focus is a later slice (build-spine step 2);
-//! this slice only needs the input to render and fold edits.
+//! Proves a panel can host an interactive input widget and demonstrates
+//! panel-first key capture: the input swallows plain typing while
+//! workspace shortcuts (chords with the command accelerator) bubble up
+//! to the workspace keymap.
 
 use iced::widget::{column, text, text_input};
 use iced::{Element, Length};
 
+use crate::workspace::command::{Chord, KeyRef};
 use crate::workspace::panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
 
 /// Concrete message for the text panel.
@@ -80,6 +82,18 @@ impl Panel for TextPanel {
         }
     }
 
+    /// The text input swallows plain typing and backspace so those keys
+    /// edit the buffer instead of triggering workspace commands. Chords
+    /// carrying the command accelerator (e.g. `Cmd+W`) are *not*
+    /// captured — they bubble up to the workspace keymap. This is the
+    /// Text dummy demonstrating typing versus global shortcuts.
+    fn captures_chord(&self, chord: Chord) -> bool {
+        if chord.mods.command {
+            return false;
+        }
+        matches!(chord.key, KeyRef::Char(_) | KeyRef::Backspace)
+    }
+
     fn snapshot(&self) -> serde_json::Value {
         serde_json::json!({ "content": self.content })
     }
@@ -88,6 +102,7 @@ impl Panel for TextPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::command::Mods;
 
     #[test]
     fn change_updates_content() {
@@ -102,5 +117,19 @@ mod tests {
         panel.update(erase(TextMessage::Changed(String::from("draft"))));
         let restored = TextPanel::from_snapshot(panel.snapshot());
         assert_eq!(restored.content(), "draft");
+    }
+
+    #[test]
+    fn captures_plain_typing() {
+        let panel = TextPanel::new();
+        assert!(panel.captures_chord(Chord::ch('a', Mods::NONE)));
+        assert!(panel.captures_chord(Chord::new(KeyRef::Backspace, Mods::NONE)));
+    }
+
+    #[test]
+    fn does_not_capture_command_shortcuts() {
+        let panel = TextPanel::new();
+        // Cmd+W must reach the workspace keymap, not the text buffer.
+        assert!(!panel.captures_chord(Chord::ch('w', Mods::CMD)));
     }
 }
