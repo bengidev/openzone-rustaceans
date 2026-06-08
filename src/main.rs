@@ -228,7 +228,10 @@ enum Message {
     Workspace(WorkspaceMessage),
     /// A key chord, tagged with the window that produced it so the
     /// reducer can route it only to the workspace window.
-    Key { window: window::Id, chord: Chord },
+    Key {
+        window: window::Id,
+        chord: Chord,
+    },
     WindowClosed(window::Id),
 }
 

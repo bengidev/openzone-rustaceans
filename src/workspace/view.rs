@@ -204,13 +204,9 @@ fn title_bar(theme: OpenZoneTheme) -> Element<'static, WorkspaceMessage> {
     .on_press(WorkspaceMessage::ToggleTheme)
     .style(move |_, _| tab_button_style(theme, false));
 
-    let bar = row![
-        label,
-        space::horizontal().width(Length::Fill),
-        theme_toggle,
-    ]
-    .align_y(iced::Alignment::Center)
-    .width(Length::Fill);
+    let bar = row![label, space::horizontal().width(Length::Fill), theme_toggle,]
+        .align_y(iced::Alignment::Center)
+        .width(Length::Fill);
 
     container(bar)
         .width(Length::Fill)
