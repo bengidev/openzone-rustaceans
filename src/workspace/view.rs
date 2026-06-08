@@ -373,7 +373,7 @@ fn bar_style(theme: OpenZoneTheme, token: BackgroundToken) -> container::Style {
         border: Border {
             color: theme.border(BorderToken::Default),
             width: 1.0,
-            radius: RadiusToken::Xs.value().into(),
+            radius: 0.0.into(),
         },
         ..container::Style::default()
     }
@@ -391,7 +391,7 @@ fn pane_frame_style(theme: OpenZoneTheme, border_token: BorderToken) -> containe
             } else {
                 1.0
             },
-            radius: RadiusToken::Md.value().into(),
+            radius: RadiusToken::Xs.value().into(),
         },
         ..container::Style::default()
     }
@@ -413,7 +413,7 @@ fn tab_button_style(theme: OpenZoneTheme, active: bool) -> button::Style {
         border: Border {
             color: theme.border(BorderToken::Subtle),
             width: if active { 1.0 } else { 0.0 },
-            radius: RadiusToken::Sm.value().into(),
+            radius: RadiusToken::Xs.value().into(),
         },
         ..button::Style::default()
     }
