@@ -5,7 +5,10 @@
 //! Heterogeneous panel messages are erased and tagged with their origin
 //! ([`PanelLocation`] + tab index) so the workspace can route them back
 //! to the exact panel that produced them through one `update` path.
+//! Raw key chords and resolved commands flow through the same enum so
+//! key routing and command dispatch share the single reducer.
 
+use crate::workspace::command::{Chord, Command};
 use crate::workspace::location::PanelLocation;
 use crate::workspace::panel::ErasedMessage;
 use iced::widget::pane_grid;
@@ -24,6 +27,15 @@ pub enum WorkspaceMessage {
     TabSelected { location: PanelLocation, tab: usize },
     /// A pane in the center grid was clicked — focus follows the click.
     PaneClicked(pane_grid::Pane),
+    /// A dock's tab strip or rail was clicked — focus moves to the dock.
+    DockFocused(PanelLocation),
+    /// A raw key chord from the keyboard subscription. The reducer
+    /// applies panel-first capture: the focused panel may swallow it,
+    /// otherwise it resolves against the workspace keymap.
+    Key(Chord),
+    /// A resolved workspace command (from a keymap hit, a menu, or a
+    /// future command palette). Dispatched straight to `apply_command`.
+    Command(Command),
 }
 
 impl std::fmt::Debug for WorkspaceMessage {
@@ -43,6 +55,11 @@ impl std::fmt::Debug for WorkspaceMessage {
             WorkspaceMessage::PaneClicked(pane) => {
                 f.debug_tuple("PaneClicked").field(pane).finish()
             }
+            WorkspaceMessage::DockFocused(location) => {
+                f.debug_tuple("DockFocused").field(location).finish()
+            }
+            WorkspaceMessage::Key(chord) => f.debug_tuple("Key").field(chord).finish(),
+            WorkspaceMessage::Command(command) => f.debug_tuple("Command").field(command).finish(),
         }
     }
 }

@@ -13,6 +13,8 @@ use std::sync::Arc;
 
 use iced::{Element, Subscription};
 
+use crate::workspace::command::Chord;
+
 /// A panel message erased to a sendable, cloneable dynamic type.
 ///
 /// `Arc` (not `Box`) is deliberate: Iced widgets such as `button` and
@@ -61,6 +63,19 @@ pub trait Panel {
     /// subscription; Iced starts/stops them as panels appear/drop.
     fn subscription(&self) -> Subscription<ErasedMessage> {
         Subscription::none()
+    }
+
+    /// Whether this panel consumes `chord` itself (panel-first key
+    /// capture). When `true`, the workspace does **not** resolve the
+    /// chord against its keymap — the focused panel swallowed it (e.g. a
+    /// text input absorbing a character). When `false`, the unhandled
+    /// chord bubbles up to the workspace command layer.
+    ///
+    /// Defaults to `false`: most panels are display-only and let every
+    /// chord reach the workspace. Interactive panels (text inputs)
+    /// override this to claim the keys they type into.
+    fn captures_chord(&self, _chord: Chord) -> bool {
+        false
     }
 
     /// A handle-only snapshot for layout persistence. Stores a

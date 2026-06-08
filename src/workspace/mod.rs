@@ -16,6 +16,8 @@
 
 #![allow(unused_imports)]
 
+pub mod command;
+pub mod dock;
 pub mod location;
 pub mod message;
 pub mod pane_state;
@@ -24,7 +26,9 @@ pub mod registry;
 pub mod state;
 pub mod view;
 
-pub use location::PanelLocation;
+pub use command::{Chord, Command, KeyRef, Keymap, Mods, chord_from_keyboard_event};
+pub use dock::{Dock, Docks};
+pub use location::{DockSide, PanelLocation};
 pub use message::WorkspaceMessage;
 pub use pane_state::PaneState;
 pub use panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
@@ -37,17 +41,24 @@ use crate::shared::design::ThemeMode;
 
 /// Launch the workspace shell as an Iced application.
 ///
-/// The composition root passes a `build_pane` factory (the shell's boot
-/// closure may run more than once, so the initial pane must be
-/// reconstructible) and the registry. The registry is retained for
-/// later slices (persistence rehydrate, dynamic panel open).
-pub fn run<F>(build_pane: F, _registry: PanelRegistry, theme_mode: ThemeMode) -> iced::Result
+/// The composition root passes a `build_pane` factory and a
+/// `build_docks` factory (the shell's boot closure may run more than
+/// once, so the initial layout must be reconstructible) and the
+/// registry. The registry is retained for later slices (persistence
+/// rehydrate, dynamic panel open).
+pub fn run<F, D>(
+    build_pane: F,
+    build_docks: D,
+    _registry: PanelRegistry,
+    theme_mode: ThemeMode,
+) -> iced::Result
 where
     F: Fn() -> PaneState + 'static,
+    D: Fn() -> Docks + 'static,
 {
     iced::application(
         move || {
-            let workspace = Workspace::single_pane(build_pane(), theme_mode);
+            let workspace = Workspace::with_docks(build_pane(), build_docks(), theme_mode);
             (WorkspaceApp { workspace }, Task::none())
         },
         WorkspaceApp::update,
@@ -76,7 +87,10 @@ impl WorkspaceApp {
     }
 
     fn subscription(&self) -> Subscription<WorkspaceMessage> {
-        self.workspace.subscription()
+        let panels = self.workspace.subscription();
+        let keyboard = iced::keyboard::listen()
+            .filter_map(|event| chord_from_keyboard_event(&event).map(WorkspaceMessage::Key));
+        Subscription::batch([panels, keyboard])
     }
 
     fn title(&self) -> String {
