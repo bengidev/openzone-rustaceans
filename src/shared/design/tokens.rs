@@ -106,6 +106,8 @@ impl RadiusToken {
 /// Spacing scale (logical units).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpacingToken {
+    /// Minimal seam between bordered surfaces (dense editor gutters).
+    Hairline,
     S1,
     S2,
     S3,
@@ -119,6 +121,7 @@ pub enum SpacingToken {
 impl SpacingToken {
     pub fn value(self) -> f32 {
         match self {
+            SpacingToken::Hairline => 2.0,
             SpacingToken::S1 => 4.0,
             SpacingToken::S2 => 8.0,
             SpacingToken::S3 => 12.0,

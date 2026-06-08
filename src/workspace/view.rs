@@ -38,17 +38,17 @@ pub fn view(workspace: &Workspace) -> Element<'_, WorkspaceMessage> {
     ]
     .width(Length::Fill)
     .height(Length::Fill)
-    .spacing(SpacingToken::S1.value());
+    .spacing(SpacingToken::Hairline.value());
 
     let body = column![main_row, dock_bottom(workspace, theme)]
         .width(Length::Fill)
         .height(Length::Fill)
-        .spacing(SpacingToken::S1.value());
+        .spacing(SpacingToken::Hairline.value());
 
     let framed = container(body)
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(SpacingToken::S1.value())
+        .padding(SpacingToken::Hairline.value())
         .style(move |_| surface_style(theme, BackgroundToken::Primary));
 
     column![title_bar(theme), framed, status_bar(theme, workspace)]
