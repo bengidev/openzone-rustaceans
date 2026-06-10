@@ -39,6 +39,10 @@ pub enum WorkspaceMessage {
     /// Flip the workspace between light and dark mode. Repaints this
     /// window via the daemon's per-window `theme` callback.
     ToggleTheme,
+    /// Ask the composition root to open another workspace window.
+    /// The workspace reducer does not handle this; the daemon lifts it
+    /// to app-root window management.
+    NewWindow,
     /// One tick from the single, store-level Clock subscription.
     ///
     /// The workspace gates a 1 Hz timer on whether any Clock panel
@@ -77,6 +81,7 @@ impl std::fmt::Debug for WorkspaceMessage {
             WorkspaceMessage::Key(chord) => f.debug_tuple("Key").field(chord).finish(),
             WorkspaceMessage::Command(command) => f.debug_tuple("Command").field(command).finish(),
             WorkspaceMessage::ToggleTheme => f.debug_tuple("ToggleTheme").finish(),
+            WorkspaceMessage::NewWindow => f.debug_tuple("NewWindow").finish(),
             WorkspaceMessage::ClockTick => f.debug_tuple("ClockTick").finish(),
             WorkspaceMessage::PaneDragged(event) => {
                 f.debug_tuple("PaneDragged").field(event).finish()

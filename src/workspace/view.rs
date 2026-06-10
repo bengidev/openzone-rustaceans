@@ -211,6 +211,20 @@ fn title_bar(theme: OpenZoneTheme) -> Element<'static, WorkspaceMessage> {
         ThemeMode::Light => "Dark",
     };
 
+    let new_window = button(
+        text("New Window")
+            .size(TypeRole::LabelMd.size())
+            .style(move |_| text::Style {
+                color: Some(theme.foreground(ForegroundToken::Secondary)),
+            }),
+    )
+    .padding([
+        SpacingToken::S1.value() as u16,
+        SpacingToken::S3.value() as u16,
+    ])
+    .on_press(WorkspaceMessage::NewWindow)
+    .style(move |_, _| tab_button_style(theme, false));
+
     let theme_toggle = button(
         text(toggle_label)
             .size(TypeRole::LabelMd.size())
@@ -225,9 +239,14 @@ fn title_bar(theme: OpenZoneTheme) -> Element<'static, WorkspaceMessage> {
     .on_press(WorkspaceMessage::ToggleTheme)
     .style(move |_, _| tab_button_style(theme, false));
 
-    let bar = row![label, space::horizontal().width(Length::Fill), theme_toggle,]
-        .align_y(iced::Alignment::Center)
-        .width(Length::Fill);
+    let bar = row![
+        label,
+        space::horizontal().width(Length::Fill),
+        new_window,
+        theme_toggle,
+    ]
+    .align_y(iced::Alignment::Center)
+    .width(Length::Fill);
 
     container(bar)
         .width(Length::Fill)
