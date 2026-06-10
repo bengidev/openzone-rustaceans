@@ -99,6 +99,9 @@ impl OpenZone {
                 }
                 if let Some(workspace) = self.workspaces.get_mut(&window) {
                     workspace.update(message, &mut self.stores);
+                    if let Some(panel) = workspace.take_torn_off_panel() {
+                        return self.open_workspace_with_panel(panel);
+                    }
                 }
                 Task::none()
             }
@@ -157,6 +160,16 @@ impl OpenZone {
         self.workspaces.insert(
             workspace_window,
             build_secondary_workspace(&mut self.stores, self.theme_mode),
+        );
+        open.discard()
+    }
+
+    /// Open a workspace window hosting a single tab torn off from another.
+    fn open_workspace_with_panel(&mut self, panel: Box<dyn Panel>) -> Task<Message> {
+        let (workspace_window, open) = window::open(workspace_window_settings());
+        self.workspaces.insert(
+            workspace_window,
+            Workspace::single_pane(PaneState::new(vec![panel]), self.theme_mode),
         );
         open.discard()
     }

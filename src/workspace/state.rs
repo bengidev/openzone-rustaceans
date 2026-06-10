@@ -47,6 +47,8 @@ pub struct Workspace {
     pub drag_state: Option<DragState>,
     /// Latest logical window size for drag bounds and drop-target preview.
     pub window_size: Size,
+    /// Panel waiting to be placed in a new OS window after a tear-off drop.
+    torn_off_panel: Option<Box<dyn Panel>>,
 }
 
 /// Default workspace window size — matches `workspace_window_settings` in
@@ -75,6 +77,7 @@ impl Workspace {
             theme_mode,
             drag_state: None,
             window_size: DEFAULT_WINDOW_SIZE,
+            torn_off_panel: None,
         }
     }
 
@@ -99,7 +102,13 @@ impl Workspace {
             theme_mode,
             drag_state: None,
             window_size: DEFAULT_WINDOW_SIZE,
+            torn_off_panel: None,
         }
+    }
+
+    /// Take a panel queued by a tear-off drop, if any.
+    pub fn take_torn_off_panel(&mut self) -> Option<Box<dyn Panel>> {
+        self.torn_off_panel.take()
     }
 
     /// The pane backing a location, if it still exists.
@@ -298,7 +307,7 @@ impl Workspace {
                 self.focused = PanelLocation::Dock(side);
             }
             DropTarget::None => {
-                // Tear-off: panel already removed from source, just drop it.
+                self.torn_off_panel = Some(panel);
             }
         }
 
@@ -1002,7 +1011,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_drag_dropped_none_removes_tab() {
+    fn tab_drag_dropped_none_queues_torn_off_panel() {
         let (mut workspace, mut stores) = three_tab_workspace();
         let location = only_center_location(&workspace);
 
@@ -1020,6 +1029,11 @@ mod tests {
         workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
 
         assert!(workspace.drag_state.is_none());
+        let torn = workspace
+            .take_torn_off_panel()
+            .expect("tear-off should queue the panel");
+        assert_eq!(torn.title(), "Counter");
+
         let PanelLocation::Center(pane) = location else {
             panic!("expected center");
         };
