@@ -183,21 +183,23 @@ impl Workspace {
                 self.drag_state = Some(DragState::new(location, tab));
             }
             WorkspaceMessage::CursorMoved(cursor) => {
-                if self.drag_state.is_some() {
+                if let Some(drag) = self.drag_state.as_ref() {
                     let grid =
                         crate::workspace::drag::compute_grid_bounds(&self.docks, self.window_size);
                     let (pane_bounds, (rails, bodies)) = self.drag_geometry();
+                    let target = crate::workspace::drag::compute_drop_target(
+                        cursor,
+                        grid,
+                        &pane_bounds,
+                        &rails,
+                        &bodies,
+                        &self.docks,
+                        Some(drag),
+                    );
                     if let Some(drag) = self.drag_state.as_mut() {
                         drag.pointer_moved = true;
                         drag.cursor = cursor;
-                        drag.target = crate::workspace::drag::compute_drop_target(
-                            cursor,
-                            grid,
-                            &pane_bounds,
-                            &rails,
-                            &bodies,
-                            &self.docks,
-                        );
+                        drag.target = target;
                     }
                 }
             }

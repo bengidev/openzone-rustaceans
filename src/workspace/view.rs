@@ -380,46 +380,49 @@ fn tab_strip<'a>(
     pane_state: &'a PaneState,
     workspace: &'a Workspace,
 ) -> Element<'a, WorkspaceMessage> {
-    let mut strip = row![].spacing(SpacingToken::S1.value());
+    let drag_source_tab = workspace
+        .drag_state
+        .as_ref()
+        .and_then(|drag| (drag.source_location == location).then_some(drag.source_tab));
 
+    let mut tab_elements: Vec<Element<'a, WorkspaceMessage>> = Vec::new();
     for (index, panel) in pane_state.tabs.iter().enumerate() {
+        if drag_source_tab == Some(index) {
+            continue;
+        }
+
         let active = index == pane_state.active;
-        let is_drag_source = workspace
-            .drag_state
-            .as_ref()
-            .is_some_and(|drag| drag.source_location == location && drag.source_tab == index);
+        let label =
+            text(panel.title())
+                .size(TypeRole::LabelMd.size())
+                .style(move |_: &iced::Theme| text::Style {
+                    color: Some(if active {
+                        theme.foreground(ForegroundToken::Accent)
+                    } else {
+                        theme.foreground(ForegroundToken::Secondary)
+                    }),
+                });
 
-        let tab: Element<'a, WorkspaceMessage> = if is_drag_source {
-            // Collapse the source slot — the canvas ghost is the only visible chip.
-            space::horizontal().width(Length::Shrink).into()
-        } else {
-            let label =
-                text(panel.title())
-                    .size(TypeRole::LabelMd.size())
-                    .style(move |_: &iced::Theme| text::Style {
-                        color: Some(if active {
-                            theme.foreground(ForegroundToken::Accent)
-                        } else {
-                            theme.foreground(ForegroundToken::Secondary)
-                        }),
-                    });
+        let tab_body = container(label)
+            .padding([
+                SpacingToken::S1.value() as u16,
+                SpacingToken::S3.value() as u16,
+            ])
+            .style(move |_| tab_chip_style(theme, active, false));
 
-            let tab_body = container(label)
-                .padding([
-                    SpacingToken::S1.value() as u16,
-                    SpacingToken::S3.value() as u16,
-                ])
-                .style(move |_| tab_chip_style(theme, active, false));
-
+        tab_elements.push(
             mouse_area(tab_body)
                 .on_press(WorkspaceMessage::TabDragStarted {
                     location,
                     tab: index,
                 })
                 .interaction(mouse::Interaction::Grab)
-                .into()
-        };
+                .into(),
+        );
+    }
 
+    let mut strip = row![].spacing(SpacingToken::S1.value());
+    for tab in tab_elements {
         strip = strip.push(tab);
     }
 
@@ -478,8 +481,14 @@ fn drop_overlay<'a>(
     let grid = drag::compute_grid_bounds(&workspace.docks, workspace.window_size);
     let pane_bounds = drag::compute_pane_bounds(&workspace.panes, grid);
     let (rails, bodies) = drag::compute_dock_regions(&workspace.docks, workspace.window_size);
-    let preview =
-        drag::preview_bounds(drag.target, &pane_bounds, &rails, &bodies, &workspace.docks);
+    let preview = drag::preview_bounds(
+        drag.target,
+        &pane_bounds,
+        &rails,
+        &bodies,
+        &workspace.docks,
+        Some(drag),
+    );
 
     let ghost = drag.pointer_moved.then(|| {
         let title = workspace

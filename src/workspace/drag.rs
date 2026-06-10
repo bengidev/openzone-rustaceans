@@ -303,6 +303,10 @@ fn dock_horizontal_extent(dock: &crate::workspace::dock::Dock) -> f32 {
     }
 }
 
+fn omit_tab_at(location: PanelLocation, drag: Option<&DragState>) -> Option<usize> {
+    drag.and_then(|d| (d.source_location == location).then_some(d.source_tab))
+}
+
 /// Hit-test cursor position against all drop zones and resolve a [`DropTarget`].
 pub fn compute_drop_target(
     cursor: Point,
@@ -311,15 +315,22 @@ pub fn compute_drop_target(
     dock_rails: &[(DockSide, Rectangle)],
     dock_bodies: &[(DockSide, Rectangle)],
     docks: &Docks,
+    drag: Option<&DragState>,
 ) -> DropTarget {
     let strip_h = tab_strip_height();
 
     // 1. Tab strips of center panes.
     for pb in pane_bounds {
         if pb.tab_strip.contains(cursor) {
+            let location = PanelLocation::Center(pb.pane);
             return DropTarget::TabStrip(TabStripTarget {
-                location: PanelLocation::Center(pb.pane),
-                index: tab_insert_index(cursor.x, pb.tab_strip, pb.tab_count),
+                location,
+                index: tab_insert_index(
+                    cursor.x,
+                    pb.tab_strip,
+                    pb.tab_count,
+                    omit_tab_at(location, drag),
+                ),
             });
         }
     }
@@ -334,10 +345,16 @@ pub fn compute_drop_target(
                 height: strip_h.min(body.height),
             };
             if dock_strip.contains(cursor) {
+                let location = PanelLocation::Dock(side);
                 let tab_count = docks.get(side).tabs.len();
                 return DropTarget::TabStrip(TabStripTarget {
-                    location: PanelLocation::Dock(side),
-                    index: tab_insert_index(cursor.x, dock_strip, tab_count),
+                    location,
+                    index: tab_insert_index(
+                        cursor.x,
+                        dock_strip,
+                        tab_count,
+                        omit_tab_at(location, drag),
+                    ),
                 });
             }
         }
@@ -403,9 +420,15 @@ pub fn compute_drop_target(
             });
         }
 
+        let location = PanelLocation::Center(pb.pane);
         return DropTarget::TabStrip(TabStripTarget {
-            location: PanelLocation::Center(pb.pane),
-            index: tab_insert_index(cursor.x, pb.tab_strip, pb.tab_count),
+            location,
+            index: tab_insert_index(
+                cursor.x,
+                pb.tab_strip,
+                pb.tab_count,
+                omit_tab_at(location, drag),
+            ),
         });
     }
 
@@ -423,20 +446,38 @@ pub fn compute_drop_target(
     DropTarget::None
 }
 
-/// Left-packed x coordinate for an insert index (0..=tab_count).
-fn tab_insert_marker_x(strip: Rectangle, tab_count: usize, index: usize) -> f32 {
-    let idx = index.min(tab_count);
-    strip.x + tab_strip_padding() + idx as f32 * (estimated_tab_width() + tab_chip_spacing())
+fn visible_tabs_before(logical_index: usize, tab_count: usize, omit: Option<usize>) -> usize {
+    (0..logical_index.min(tab_count))
+        .filter(|index| omit != Some(*index))
+        .count()
 }
 
-fn tab_insert_index(cursor_x: f32, strip: Rectangle, tab_count: usize) -> usize {
+/// Left-packed x coordinate for a logical insert index (0..=tab_count).
+fn tab_insert_marker_x(
+    strip: Rectangle,
+    tab_count: usize,
+    index: usize,
+    omit: Option<usize>,
+) -> f32 {
+    let visible_before = visible_tabs_before(index.min(tab_count), tab_count, omit);
+    strip.x
+        + tab_strip_padding()
+        + visible_before as f32 * (estimated_tab_width() + tab_chip_spacing())
+}
+
+fn tab_insert_index(
+    cursor_x: f32,
+    strip: Rectangle,
+    tab_count: usize,
+    omit: Option<usize>,
+) -> usize {
     if tab_count == 0 {
         return 0;
     }
 
     for index in 0..tab_count {
-        let left = tab_insert_marker_x(strip, tab_count, index);
-        let right = tab_insert_marker_x(strip, tab_count, index + 1);
+        let left = tab_insert_marker_x(strip, tab_count, index, omit);
+        let right = tab_insert_marker_x(strip, tab_count, index + 1, omit);
         if cursor_x < (left + right) / 2.0 {
             return index;
         }
@@ -452,9 +493,12 @@ pub fn preview_bounds(
     dock_rails: &[(DockSide, Rectangle)],
     dock_bodies: &[(DockSide, Rectangle)],
     docks: &Docks,
+    drag: Option<&DragState>,
 ) -> Option<Rectangle> {
     match target {
-        DropTarget::TabStrip(strip) => tab_insert_marker(strip, pane_bounds, dock_bodies, docks),
+        DropTarget::TabStrip(strip) => {
+            tab_insert_marker(strip, pane_bounds, dock_bodies, docks, drag)
+        }
         DropTarget::SplitPane(split) => pane_bounds
             .iter()
             .find(|pb| pb.pane == split.pane)
@@ -469,6 +513,7 @@ fn tab_insert_marker(
     pane_bounds: &[PaneBounds],
     dock_bodies: &[(DockSide, Rectangle)],
     docks: &Docks,
+    drag: Option<&DragState>,
 ) -> Option<Rectangle> {
     let strip_h = tab_strip_height();
     let strip_rect = match strip.location {
@@ -499,7 +544,12 @@ fn tab_insert_marker(
         PanelLocation::Dock(side) => docks.get(side).tabs.len(),
     };
 
-    let x = tab_insert_marker_x(strip_rect, tab_count, strip.index);
+    let x = tab_insert_marker_x(
+        strip_rect,
+        tab_count,
+        strip.index,
+        omit_tab_at(strip.location, drag),
+    );
 
     Some(Rectangle {
         x: x - TAB_INSERT_MARKER_WIDTH / 2.0,
@@ -628,6 +678,7 @@ mod tests {
             &rails,
             &bodies,
             &docks,
+            None,
         );
         assert_eq!(target, DropTarget::None);
     }
@@ -650,6 +701,7 @@ mod tests {
             &rails,
             &bodies,
             &docks,
+            None,
         );
         assert_eq!(
             target,
@@ -677,6 +729,7 @@ mod tests {
             &rails,
             &bodies,
             &docks,
+            None,
         );
         assert_eq!(
             target,
@@ -716,7 +769,7 @@ mod tests {
             pb.tab_strip.y + pb.tab_strip.height / 2.0,
         );
 
-        let target = compute_drop_target(cursor, grid, &pane_bounds, &rails, &bodies, &docks);
+        let target = compute_drop_target(cursor, grid, &pane_bounds, &rails, &bodies, &docks, None);
         assert!(
             matches!(target, DropTarget::TabStrip(_)),
             "expected tab strip, got {target:?}"
@@ -755,24 +808,38 @@ mod tests {
             &[pb],
             &[],
             &docks,
+            None,
         )
         .unwrap();
         assert!((marker.width - TAB_INSERT_MARKER_WIDTH).abs() < 0.1);
         assert!((marker.height - strip.height).abs() < 0.1);
-        let expected_x = tab_insert_marker_x(strip, 3, 1) - TAB_INSERT_MARKER_WIDTH / 2.0;
+        let expected_x = tab_insert_marker_x(strip, 3, 1, None) - TAB_INSERT_MARKER_WIDTH / 2.0;
         assert!((marker.x - expected_x).abs() < 0.1);
     }
 
     #[test]
     fn tab_insert_index_uses_left_packed_tab_widths() {
         let strip = Rectangle::new(Point::new(50.0, 10.0), Size::new(600.0, 28.0));
-        let before_second = tab_insert_marker_x(strip, 2, 1) - 2.0;
-        let after_second = tab_insert_marker_x(strip, 2, 2) - 2.0;
-        assert_eq!(tab_insert_index(before_second, strip, 2), 1);
-        assert_eq!(tab_insert_index(after_second, strip, 2), 2);
+        let before_second = tab_insert_marker_x(strip, 2, 1, None) - 2.0;
+        let after_second = tab_insert_marker_x(strip, 2, 2, None) - 2.0;
+        assert_eq!(tab_insert_index(before_second, strip, 2, None), 1);
+        assert_eq!(tab_insert_index(after_second, strip, 2, None), 2);
         assert_eq!(
-            tab_insert_index(strip.x + tab_strip_padding() + 1.0, strip, 2),
+            tab_insert_index(strip.x + tab_strip_padding() + 1.0, strip, 2, None),
             0
         );
+    }
+
+    #[test]
+    fn tab_insert_marker_omits_dragged_tab_slot() {
+        let strip = Rectangle::new(Point::new(50.0, 10.0), Size::new(600.0, 28.0));
+        // Dragging tab 0: insert before tab 1 lines up with the lone visible chip.
+        let dragging_first = tab_insert_marker_x(strip, 2, 1, Some(0));
+        let before_first = tab_insert_marker_x(strip, 2, 0, None);
+        assert_eq!(dragging_first, before_first);
+        // Dragging tab 1: end insert lines up after the lone visible chip.
+        let dragging_second = tab_insert_marker_x(strip, 2, 2, Some(1));
+        let after_first = tab_insert_marker_x(strip, 2, 1, None);
+        assert_eq!(dragging_second, after_first);
     }
 }
