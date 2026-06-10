@@ -127,6 +127,13 @@ impl Workspace {
         self.focused == location
     }
 
+    /// Title of a tab at `location` / `tab`, for drag ghost rendering.
+    pub fn tab_title(&self, location: PanelLocation, tab: usize) -> Option<String> {
+        self.pane_state(location)
+            .and_then(|pane| pane.tabs.get(tab))
+            .map(|panel| panel.title())
+    }
+
     /// Fold a workspace message into state. Single mutation path.
     ///
     /// `stores` is the app-root [`AppStores`] borrowed as a sibling
@@ -177,14 +184,19 @@ impl Workspace {
             }
             WorkspaceMessage::CursorMoved(cursor) => {
                 if self.drag_state.is_some() {
+                    let grid =
+                        crate::workspace::drag::compute_grid_bounds(&self.docks, self.window_size);
                     let (pane_bounds, (rails, bodies)) = self.drag_geometry();
                     if let Some(drag) = self.drag_state.as_mut() {
                         drag.pointer_moved = true;
+                        drag.cursor = cursor;
                         drag.target = crate::workspace::drag::compute_drop_target(
                             cursor,
+                            grid,
                             &pane_bounds,
                             &rails,
                             &bodies,
+                            &self.docks,
                         );
                     }
                 }

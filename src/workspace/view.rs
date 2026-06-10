@@ -21,15 +21,14 @@ use crate::shared::design::{
 };
 use crate::workspace::dock::Dock;
 use crate::workspace::drag;
+use crate::workspace::layout_metrics::{
+    self, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, SIDE_DOCK_WIDTH,
+};
 use crate::workspace::location::{DockSide, PanelLocation};
 use crate::workspace::message::WorkspaceMessage;
 use crate::workspace::pane_state::PaneState;
 use crate::workspace::state::Workspace;
 use crate::workspace::stores::AppStores;
-
-const SIDE_DOCK_WIDTH: f32 = 280.0;
-const BOTTOM_DOCK_HEIGHT: f32 = 200.0;
-const DOCK_RAIL_THICKNESS: f32 = 28.0;
 
 /// Render the whole workspace shell as a view over `stores`.
 ///
@@ -477,21 +476,48 @@ fn drop_overlay<'a>(
     let grid = drag::compute_grid_bounds(&workspace.docks, workspace.window_size);
     let pane_bounds = drag::compute_pane_bounds(&workspace.panes, grid);
     let (rails, bodies) = drag::compute_dock_regions(&workspace.docks, workspace.window_size);
-    let Some(rect) = drag::preview_bounds(drag.target, &pane_bounds, &rails, &bodies) else {
-        return space::horizontal().width(Length::Shrink).into();
-    };
+    let preview =
+        drag::preview_bounds(drag.target, &pane_bounds, &rails, &bodies, &workspace.docks);
+
+    let ghost = drag.pointer_moved.then(|| {
+        let title = workspace
+            .tab_title(drag.source_location, drag.source_tab)
+            .unwrap_or_else(|| String::from("Tab"));
+        let tab_w = layout_metrics::estimated_tab_width();
+        let tab_h = layout_metrics::tab_strip_height();
+        GhostTab {
+            position: Point::new(drag.cursor.x - tab_w / 2.0, drag.cursor.y - tab_h / 2.0),
+            size: Size::new(tab_w, tab_h),
+            title,
+        }
+    });
 
     let accent = theme.foreground(ForegroundToken::Accent);
-    Canvas::new(DropOverlay { rect, accent })
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    let elevated = theme.background(BackgroundToken::Elevated);
+    Canvas::new(DropOverlay {
+        preview,
+        ghost,
+        accent,
+        elevated,
+    })
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
+struct GhostTab {
+    position: Point,
+    size: Size,
+    title: String,
+}
+
+#[derive(Debug, Clone)]
 struct DropOverlay {
-    rect: Rectangle,
+    preview: Option<Rectangle>,
+    ghost: Option<GhostTab>,
     accent: Color,
+    elevated: Color,
 }
 
 impl<Message> Program<Message> for DropOverlay {
@@ -505,25 +531,52 @@ impl<Message> Program<Message> for DropOverlay {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        if self.rect.width <= 0.0 || self.rect.height <= 0.0 {
-            return Vec::new();
+        let mut frame = Frame::new(renderer, bounds.size());
+
+        if let Some(rect) = self.preview
+            && rect.width > 0.0
+            && rect.height > 0.0
+        {
+            let fill = Color {
+                a: 0.18,
+                ..self.accent
+            };
+            frame.fill_rectangle(
+                Point::new(rect.x, rect.y),
+                Size::new(rect.width, rect.height),
+                fill,
+            );
+            frame.stroke_rectangle(
+                Point::new(rect.x, rect.y),
+                Size::new(rect.width, rect.height),
+                Stroke::default().with_width(2.0).with_color(self.accent),
+            );
         }
 
-        let mut frame = Frame::new(renderer, bounds.size());
-        let fill = Color {
-            a: 0.18,
-            ..self.accent
-        };
-        frame.fill_rectangle(
-            Point::new(self.rect.x, self.rect.y),
-            Size::new(self.rect.width, self.rect.height),
-            fill,
-        );
-        frame.stroke_rectangle(
-            Point::new(self.rect.x, self.rect.y),
-            Size::new(self.rect.width, self.rect.height),
-            Stroke::default().with_width(2.0).with_color(self.accent),
-        );
+        if let Some(ghost) = &self.ghost {
+            let ghost_fill = Color {
+                a: 0.92,
+                ..self.elevated
+            };
+            frame.fill_rectangle(ghost.position, ghost.size, ghost_fill);
+            frame.stroke_rectangle(
+                ghost.position,
+                ghost.size,
+                Stroke::default().with_width(1.0).with_color(self.accent),
+            );
+            let label = canvas::Text {
+                content: ghost.title.clone(),
+                position: Point::new(
+                    ghost.position.x + SpacingToken::S3.value(),
+                    ghost.position.y + SpacingToken::S1.value(),
+                ),
+                size: iced::Pixels(TypeRole::LabelMd.size()),
+                color: self.accent,
+                ..canvas::Text::default()
+            };
+            frame.fill_text(label);
+        }
+
         vec![frame.into_geometry()]
     }
 }
