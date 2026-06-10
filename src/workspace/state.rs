@@ -16,7 +16,9 @@ use iced::{Point, Size, Subscription};
 use crate::shared::design::{OpenZoneTheme, ThemeMode};
 use crate::workspace::command::{Chord, Command, Keymap};
 use crate::workspace::dock::Docks;
-use crate::workspace::drag::{Direction, DragState, DropTarget, SplitPaneTarget, TabStripTarget};
+use crate::workspace::drag::{
+    Direction, DockRegions, DragState, DropTarget, PaneBounds, SplitPaneTarget, TabStripTarget,
+};
 use crate::workspace::location::{DockSide, PanelLocation};
 use crate::workspace::message::WorkspaceMessage;
 use crate::workspace::pane_state::PaneState;
@@ -175,7 +177,7 @@ impl Workspace {
             }
             WorkspaceMessage::CursorMoved(cursor) => {
                 if self.drag_state.is_some() {
-                    let (pane_bounds, rails, bodies) = self.drag_geometry();
+                    let (pane_bounds, (rails, bodies)) = self.drag_geometry();
                     if let Some(drag) = self.drag_state.as_mut() {
                         drag.pointer_moved = true;
                         drag.target = crate::workspace::drag::compute_drop_target(
@@ -199,18 +201,12 @@ impl Workspace {
     }
 
     /// Pane and dock rectangles used for drag hit-testing and preview.
-    fn drag_geometry(
-        &self,
-    ) -> (
-        Vec<crate::workspace::drag::PaneBounds>,
-        [(DockSide, iced::Rectangle); 3],
-        [(DockSide, iced::Rectangle); 3],
-    ) {
+    fn drag_geometry(&self) -> (Vec<PaneBounds>, DockRegions) {
         let grid = crate::workspace::drag::compute_grid_bounds(&self.docks, self.window_size);
         let pane_bounds = crate::workspace::drag::compute_pane_bounds(&self.panes, grid);
-        let (rails, bodies) =
+        let dock_regions =
             crate::workspace::drag::compute_dock_regions(&self.docks, self.window_size);
-        (pane_bounds, rails, bodies)
+        (pane_bounds, dock_regions)
     }
 
     /// Apply a completed tab drag operation.

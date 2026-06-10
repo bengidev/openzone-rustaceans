@@ -8,11 +8,11 @@
 //! render as minimal rails. All styling resolves through
 //! `shared::design` tokens — no hardcoded colors or sizes.
 
-use iced::widget::{
-    Canvas, PaneGrid, button, canvas, column, container, mouse_area, pane_grid, row, space,
-    stack, text,
-};
 use iced::widget::canvas::{Frame, Geometry, Program, Stroke};
+use iced::widget::{
+    Canvas, PaneGrid, button, canvas, column, container, mouse_area, pane_grid, row, space, stack,
+    text,
+};
 use iced::{Background, Border, Color, Element, Length, Point, Rectangle, Size, mouse};
 
 use crate::shared::design::{
@@ -86,12 +86,7 @@ fn center_pane_grid<'a>(
             let location = PanelLocation::Center(pane);
             let focused = workspace.is_focused(location);
             pane_grid::Content::new(pane_body(
-                theme,
-                location,
-                pane_state,
-                focused,
-                stores,
-                workspace,
+                theme, location, pane_state, focused, stores, workspace,
             ))
         })
         .width(Length::Fill)
@@ -390,18 +385,20 @@ fn tab_strip<'a>(
 
     for (index, panel) in pane_state.tabs.iter().enumerate() {
         let active = index == pane_state.active;
-        let is_drag_source = workspace.drag_state.as_ref().is_some_and(|drag| {
-            drag.source_location == location && drag.source_tab == index
-        });
-        let label = text(panel.title())
-            .size(TypeRole::LabelMd.size())
-            .style(move |_: &iced::Theme| text::Style {
-                color: Some(if active {
-                    theme.foreground(ForegroundToken::Accent)
-                } else {
-                    theme.foreground(ForegroundToken::Secondary)
-                }),
-            });
+        let is_drag_source = workspace
+            .drag_state
+            .as_ref()
+            .is_some_and(|drag| drag.source_location == location && drag.source_tab == index);
+        let label =
+            text(panel.title())
+                .size(TypeRole::LabelMd.size())
+                .style(move |_: &iced::Theme| text::Style {
+                    color: Some(if active {
+                        theme.foreground(ForegroundToken::Accent)
+                    } else {
+                        theme.foreground(ForegroundToken::Secondary)
+                    }),
+                });
 
         let tab_body = container(label)
             .padding([

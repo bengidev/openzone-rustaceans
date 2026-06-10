@@ -11,8 +11,8 @@
 use crate::workspace::command::{Chord, Command};
 use crate::workspace::location::PanelLocation;
 use crate::workspace::panel::ErasedMessage;
-use iced::{Point, Size};
 use iced::widget::pane_grid;
+use iced::{Point, Size};
 
 /// Everything the workspace reducer can react to.
 #[derive(Clone)]

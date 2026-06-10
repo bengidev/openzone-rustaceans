@@ -228,14 +228,12 @@ impl OpenZone {
                     .with(window_id)
                     .map(|(window, message)| Message::Workspace { window, message }),
             );
-            streams.push(
-                window::resize_events().filter_map(move |(id, size)| {
-                    (id == window_id).then(|| Message::Workspace {
-                        window: window_id,
-                        message: WorkspaceMessage::WindowResized(size),
-                    })
-                }),
-            );
+            streams.push(window::resize_events().filter_map(move |(id, size)| {
+                (id == window_id).then(|| Message::Workspace {
+                    window: window_id,
+                    message: WorkspaceMessage::WindowResized(size),
+                })
+            }));
         }
 
         if !self.workspaces.is_empty() {
