@@ -19,6 +19,7 @@
 pub mod command;
 pub mod dock;
 pub mod drag;
+pub mod layout_metrics;
 pub mod layout_store;
 pub mod location;
 pub mod message;
