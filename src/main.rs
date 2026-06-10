@@ -9,12 +9,14 @@
 //! Window model: the app boots showing the onboarding window. When the
 //! user presses *Enter OpenZone*, the workspace opens in its own,
 //! separate OS window and the onboarding window closes (clean handoff).
-//! Onboarding is never overridden in place.
+//! Additional workspace windows can be opened from the title bar or with
+//! `Cmd+Shift+N`. Onboarding is never overridden in place.
 
 mod features;
 mod shared;
 mod workspace;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use iced::event::{self, Event};
@@ -28,8 +30,9 @@ use crate::features::onboarding::{
     view as onboarding_view,
 };
 use crate::shared::design::ThemeMode;
+use crate::workspace::stores::CounterId;
 use crate::workspace::{
-    AppStores, Chord, Docks, FileLayoutStore, LayoutStore, PaneState, Panel, PanelKind,
+    AppStores, Chord, Docks, FileLayoutStore, LayoutStore, Mods, PaneState, Panel, PanelKind,
     PanelRegistry, Workspace, WorkspaceMessage, chord_from_keyboard_event,
 };
 
@@ -47,8 +50,7 @@ fn main() -> iced::Result {
             let app = OpenZone {
                 onboarding: Some(OnboardingState::new(persistence.clone(), theme_mode)),
                 onboarding_window: Some(onboarding_window),
-                workspace: None,
-                workspace_window: None,
+                workspaces: HashMap::new(),
                 stores: AppStores::new(),
                 persistence: persistence.clone(),
                 registry: build_registry(),
@@ -68,29 +70,21 @@ fn main() -> iced::Result {
 
 /// The top-level multi-window application state.
 ///
-/// Holds at most one onboarding window and one workspace window, each
-/// paired with the feature state it renders. A window id with no state
-/// (or vice versa) never occurs: they are set and cleared together.
-///
-/// `stores` is the app-root [`AppStores`] — the single owner of Counter
-/// and Clock state across the whole app. Workspace state lives in a
-/// sibling `workspace` field so the two split-borrow cleanly when the
-/// reducer runs.
+/// Global state stays thin: panel registry, layout store, and app-root
+/// [`AppStores`]. Each workspace OS window owns a fat [`Workspace`]
+/// (pane tree, docks, focus) keyed by [`window::Id`].
 struct OpenZone {
     onboarding: Option<OnboardingState>,
     onboarding_window: Option<window::Id>,
-    workspace: Option<Workspace>,
-    workspace_window: Option<window::Id>,
-    /// App-root domain stores. Lives next to `workspace` so
-    /// `OpenZone::update` can split-borrow the two when handing
-    /// `&mut AppStores` to the workspace reducer.
+    workspaces: HashMap<window::Id, Workspace>,
+    /// App-root domain stores shared across every workspace window.
     stores: AppStores,
     persistence: Arc<dyn OnboardingPersistence>,
     /// The composition seam the shell uses to rehydrate panels from
     /// persisted handles. It knows panel kinds, not concrete types.
     registry: PanelRegistry,
     /// Layout persistence: a saved snapshot is restored when entering the
-    /// workspace and a fresh one is written when its window closes.
+    /// first workspace window and written when the last one closes.
     layout_store: Arc<dyn LayoutStore>,
     theme_mode: ThemeMode,
 }
@@ -99,23 +93,24 @@ impl OpenZone {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Onboarding(message) => self.update_onboarding(message),
-            Message::Workspace(message) => {
-                if let Some(workspace) = self.workspace.as_mut() {
-                    // Sibling-field split borrow: `workspace` and
-                    // `stores` are independent fields on `self`, so the
-                    // reducer can mutate both without aliasing.
+            Message::Workspace { window, message } => {
+                if matches!(message, WorkspaceMessage::NewWindow) {
+                    return self.open_additional_workspace();
+                }
+                if let Some(workspace) = self.workspaces.get_mut(&window) {
                     workspace.update(message, &mut self.stores);
                 }
                 Task::none()
             }
             Message::Key { window, chord } => {
-                // Keyboard events fire for whichever window is focused;
-                // only the workspace window routes chords into the shell.
-                if self.workspace_window == Some(window)
-                    && let Some(workspace) = self.workspace.as_mut()
-                {
+                if let Some(workspace) = self.workspaces.get_mut(&window) {
                     workspace.update(WorkspaceMessage::Key(chord), &mut self.stores);
                 }
+                Task::none()
+            }
+            Message::OpenWorkspace => self.open_additional_workspace(),
+            Message::ClockTick => {
+                self.stores.clock.tick();
                 Task::none()
             }
             Message::WindowClosed(id) => self.handle_window_closed(id),
@@ -138,15 +133,11 @@ impl OpenZone {
         }
     }
 
-    /// Open the workspace in its own dedicated window and close the
-    /// onboarding window. The workspace does not replace onboarding in
-    /// place — it is a genuinely separate OS window. A previously saved
-    /// layout is restored through the registry; absent or unreadable,
-    /// the shell falls back to its seeded default layout.
+    /// Open the first workspace window and close onboarding.
     fn enter_workspace(&mut self) -> Task<Message> {
         let (workspace_window, open) = window::open(workspace_window_settings());
-        self.workspace_window = Some(workspace_window);
-        self.workspace = Some(self.restore_or_build_workspace());
+        let workspace = self.restore_or_build_workspace();
+        self.workspaces.insert(workspace_window, workspace);
 
         let close = match self.onboarding_window.take() {
             Some(onboarding_window) => {
@@ -159,9 +150,19 @@ impl OpenZone {
         Task::batch([open.discard(), close])
     }
 
+    /// Open another workspace window with an independent layout that
+    /// still observes the same app-root Counter and Clock stores.
+    fn open_additional_workspace(&mut self) -> Task<Message> {
+        let (workspace_window, open) = window::open(workspace_window_settings());
+        self.workspaces.insert(
+            workspace_window,
+            build_secondary_workspace(&mut self.stores, self.theme_mode),
+        );
+        open.discard()
+    }
+
     /// Restore the workspace from a persisted layout snapshot, or build
-    /// the seeded default when nothing valid is stored. Either path
-    /// allocates panel store slots through `&mut self.stores`.
+    /// the seeded default when nothing valid is stored.
     fn restore_or_build_workspace(&mut self) -> Workspace {
         match self.layout_store.load() {
             Some(snapshot) => {
@@ -178,21 +179,15 @@ impl OpenZone {
             self.onboarding_window = None;
             self.onboarding = None;
         }
-        if self.workspace_window == Some(id) {
-            // Persist the final layout before tearing the workspace down,
-            // so the next launch restores splits, tabs, docks, and focus.
-            // Capture reads each panel's snapshot through the canonical
-            // store value so the persisted handle reflects the latest
-            // store state, not stale panel-side bookkeeping.
-            if let Some(workspace) = self.workspace.as_ref() {
-                let snapshot = workspace::capture(workspace, &self.stores);
-                let _ = self.layout_store.save(&snapshot);
-            }
-            self.workspace_window = None;
-            self.workspace = None;
+
+        if let Some(workspace) = self.workspaces.remove(&id)
+            && self.workspaces.is_empty()
+        {
+            let snapshot = workspace::capture(&workspace, &self.stores);
+            let _ = self.layout_store.save(&snapshot);
         }
 
-        if self.onboarding_window.is_none() && self.workspace_window.is_none() {
+        if self.onboarding_window.is_none() && self.workspaces.is_empty() {
             iced::exit()
         } else {
             Task::none()
@@ -206,13 +201,11 @@ impl OpenZone {
             return onboarding_view(onboarding).map(Message::Onboarding);
         }
 
-        if self.workspace_window == Some(window)
-            && let Some(workspace) = &self.workspace
-        {
-            return workspace::view::view(workspace, &self.stores).map(Message::Workspace);
+        if let Some(workspace) = self.workspaces.get(&window) {
+            return workspace::view::view(workspace, &self.stores)
+                .map(move |message| Message::Workspace { window, message });
         }
 
-        // A window with no backing state (e.g. mid-close) renders empty.
         iced::widget::container(iced::widget::Space::new())
             .width(iced::Length::Fill)
             .height(iced::Length::Fill)
@@ -226,9 +219,23 @@ impl OpenZone {
             streams.push(onboarding.subscription().map(Message::Onboarding));
         }
 
-        if let Some(workspace) = &self.workspace {
-            streams.push(workspace.subscription().map(Message::Workspace));
+        for (window_id, workspace) in &self.workspaces {
+            streams.push(
+                workspace
+                    .subscription()
+                    .with(*window_id)
+                    .map(|(window, message)| Message::Workspace { window, message }),
+            );
+        }
+
+        if !self.workspaces.is_empty() {
             streams.push(event::listen_with(workspace_key_event));
+        }
+
+        if self.any_workspace_has_clock() {
+            streams.push(
+                iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::ClockTick),
+            );
         }
 
         streams.push(window::close_events().map(Message::WindowClosed));
@@ -236,21 +243,23 @@ impl OpenZone {
         Subscription::batch(streams)
     }
 
+    fn any_workspace_has_clock(&self) -> bool {
+        self.workspaces
+            .values()
+            .any(|workspace| workspace.has_clock_panel())
+    }
+
     fn title(&self, _window: window::Id) -> String {
         String::from("OpenZone")
     }
 
     fn theme(&self, window: window::Id) -> Theme {
-        let mode = if self.workspace_window == Some(window) {
-            self.workspace
-                .as_ref()
-                .map(|workspace| workspace.theme_mode)
-                .unwrap_or(self.theme_mode)
+        let mode = if let Some(workspace) = self.workspaces.get(&window) {
+            workspace.theme_mode
+        } else if let Some(onboarding) = &self.onboarding {
+            onboarding.theme_mode
         } else {
-            self.onboarding
-                .as_ref()
-                .map(|onboarding| onboarding.theme_mode)
-                .unwrap_or(self.theme_mode)
+            self.theme_mode
         };
 
         match mode {
@@ -265,13 +274,20 @@ impl OpenZone {
 #[derive(Debug, Clone)]
 enum Message {
     Onboarding(OnboardingMessage),
-    Workspace(WorkspaceMessage),
+    Workspace {
+        window: window::Id,
+        message: WorkspaceMessage,
+    },
     /// A key chord, tagged with the window that produced it so the
-    /// reducer can route it only to the workspace window.
+    /// reducer can route it only to that workspace window.
     Key {
         window: window::Id,
         chord: Chord,
     },
+    /// Open another workspace window (title bar or `Cmd+Shift+N`).
+    OpenWorkspace,
+    /// One tick from the single app-level Clock subscription.
+    ClockTick,
     WindowClosed(window::Id),
 }
 
@@ -285,7 +301,13 @@ fn workspace_key_event(
 ) -> Option<Message> {
     match event {
         Event::Keyboard(keyboard) => {
-            chord_from_keyboard_event(&keyboard).map(|chord| Message::Key { window, chord })
+            if let Some(chord) = chord_from_keyboard_event(&keyboard) {
+                if chord == Chord::ch('n', Mods::CMD.with_shift()) {
+                    return Some(Message::OpenWorkspace);
+                }
+                return Some(Message::Key { window, chord });
+            }
+            None
         }
         _ => None,
     }
@@ -305,8 +327,6 @@ fn workspace_window_settings() -> window::Settings {
     }
 }
 
-/// Pick the production persistence backend, degrading to in-memory only
-/// if the OS data directory cannot be resolved.
 fn load_persistence() -> Arc<dyn OnboardingPersistence> {
     match FileOnboardingPersistence::from_project_dirs() {
         Ok(store) => Arc::new(store),
@@ -314,9 +334,6 @@ fn load_persistence() -> Arc<dyn OnboardingPersistence> {
     }
 }
 
-/// Pick the layout-persistence backend. If the OS data directory cannot
-/// be resolved, fall back to a no-op store so the shell still launches
-/// (it just won't remember layout across runs).
 fn load_layout_store() -> Arc<dyn LayoutStore> {
     match FileLayoutStore::from_project_dirs() {
         Ok(store) => Arc::new(store),
@@ -324,8 +341,6 @@ fn load_layout_store() -> Arc<dyn LayoutStore> {
     }
 }
 
-/// A layout store that persists nothing. Used only when no data
-/// directory is available; `load` always yields the seeded default.
 struct NoopLayoutStore;
 
 impl LayoutStore for NoopLayoutStore {
@@ -341,10 +356,6 @@ impl LayoutStore for NoopLayoutStore {
     }
 }
 
-/// Register feature panel constructors. This table is the composition
-/// seam the shell uses to rehydrate panels; it knows kinds, not types.
-/// Each constructor receives `&mut AppStores` so a store-backed panel
-/// (Counter) can allocate its slot at rehydrate time.
 fn build_registry() -> PanelRegistry {
     let mut registry = PanelRegistry::new();
     registry
@@ -360,10 +371,8 @@ fn build_registry() -> PanelRegistry {
     registry
 }
 
-/// Build the workspace layout: one center pane hosting the dummy panels
-/// as tabs, with one dummy panel per edge dock so docks can be exercised.
-/// Every constructed Counter allocates a fresh [`AppStores::counter`]
-/// slot so each panel observes an independent count.
+/// Build the primary workspace layout: one center pane hosting the dummy
+/// panels as tabs, with one dummy panel per edge dock.
 fn build_workspace(stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace {
     let center_tabs: Vec<Box<dyn Panel>> = vec![
         Box::new(CounterPanel::new(stores)),
@@ -378,4 +387,26 @@ fn build_workspace(stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace {
     );
 
     Workspace::with_docks(PaneState::new(center_tabs), docks, theme_mode)
+}
+
+/// Build an additional workspace window with its own layout but shared
+/// store-backed Counter and Clock panels.
+fn build_secondary_workspace(stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace {
+    let shared_counter = shared_counter_id(stores);
+    let center_tabs: Vec<Box<dyn Panel>> = vec![
+        Box::new(CounterPanel::with_id(shared_counter)),
+        Box::new(ClockPanel::new()),
+    ];
+
+    Workspace::single_pane(PaneState::new(center_tabs), theme_mode)
+}
+
+/// Reuse the first live counter slot when opening another window so both
+/// windows observe the same count after a store mutation.
+fn shared_counter_id(stores: &mut AppStores) -> CounterId {
+    if stores.counter.count(0).is_some() {
+        0
+    } else {
+        stores.counter.create()
+    }
 }
