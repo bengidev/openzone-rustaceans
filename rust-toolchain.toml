@@ -1,0 +1,9 @@
+# Pinned Rust toolchain for OpenZone Rustaceans.
+#
+# Ensures contributors and rust-analyzer use the same compiler channel,
+# regardless of the local rustup default.
+
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy", "rust-analyzer"]
+profile = "minimal"
