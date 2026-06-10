@@ -11,6 +11,7 @@
 use crate::workspace::command::{Chord, Command};
 use crate::workspace::location::PanelLocation;
 use crate::workspace::panel::ErasedMessage;
+use iced::Point;
 use iced::widget::pane_grid;
 
 /// Everything the workspace reducer can react to.
@@ -56,6 +57,14 @@ pub enum WorkspaceMessage {
     /// A drag-and-drop interaction on the center pane grid. On
     /// `Dropped` the reducer reorders the panes; other phases are no-ops.
     PaneDragged(pane_grid::DragEvent),
+    /// User pressed a tab to begin custom drag. The location + tab
+    /// identify the dragged panel.
+    TabDragStarted { location: PanelLocation, tab: usize },
+    /// Cursor moved during a tab drag. Carries the cursor position in
+    /// workspace-local coordinates.
+    CursorMoved(Point),
+    /// Tab drag completed — apply the resolved drop target.
+    TabDragDropped,
 }
 
 impl std::fmt::Debug for WorkspaceMessage {
@@ -86,6 +95,15 @@ impl std::fmt::Debug for WorkspaceMessage {
             WorkspaceMessage::PaneDragged(event) => {
                 f.debug_tuple("PaneDragged").field(event).finish()
             }
+            WorkspaceMessage::TabDragStarted { location, tab } => f
+                .debug_struct("TabDragStarted")
+                .field("location", location)
+                .field("tab", tab)
+                .finish(),
+            WorkspaceMessage::CursorMoved(point) => {
+                f.debug_tuple("CursorMoved").field(point).finish()
+            }
+            WorkspaceMessage::TabDragDropped => f.debug_tuple("TabDragDropped").finish(),
         }
     }
 }
