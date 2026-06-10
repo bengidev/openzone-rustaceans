@@ -63,6 +63,9 @@ pub struct DragState {
     pub source_location: PanelLocation,
     pub source_tab: usize,
     pub target: DropTarget,
+    /// Set once the cursor moves during an active drag. A drop with
+    /// [`DropTarget::None`] and no movement is treated as a tab click.
+    pub pointer_moved: bool,
 }
 
 impl DragState {
@@ -71,6 +74,7 @@ impl DragState {
             source_location,
             source_tab,
             target: DropTarget::None,
+            pointer_moved: false,
         }
     }
 }
@@ -388,6 +392,108 @@ pub fn compute_drop_target(
     }
 
     DropTarget::None
+}
+
+/// Pixel rectangle to highlight for a resolved [`DropTarget`].
+pub fn preview_bounds(
+    target: DropTarget,
+    pane_bounds: &[PaneBounds],
+    dock_rails: &[(DockSide, Rectangle)],
+    dock_bodies: &[(DockSide, Rectangle)],
+) -> Option<Rectangle> {
+    match target {
+        DropTarget::TabStrip(strip) => tab_strip_bounds(strip, pane_bounds, dock_bodies),
+        DropTarget::SplitPane(split) => pane_bounds
+            .iter()
+            .find(|pb| pb.pane == split.pane)
+            .map(|pb| split_zone_rect(pb, split.direction)),
+        DropTarget::Dock(side) => dock_preview_bounds(side, dock_rails, dock_bodies),
+        DropTarget::None => None,
+    }
+}
+
+fn tab_strip_bounds(
+    strip: TabStripTarget,
+    pane_bounds: &[PaneBounds],
+    dock_bodies: &[(DockSide, Rectangle)],
+) -> Option<Rectangle> {
+    match strip.location {
+        PanelLocation::Center(pane) => pane_bounds
+            .iter()
+            .find(|pb| pb.pane == pane)
+            .map(|pb| pb.tab_strip),
+        PanelLocation::Dock(side) => dock_bodies.iter().find_map(|&(dock_side, body)| {
+            if dock_side == side && body.width > 0.0 && body.height > 0.0 {
+                Some(Rectangle {
+                    x: body.x,
+                    y: body.y,
+                    width: body.width,
+                    height: TAB_STRIP_HEIGHT.min(body.height),
+                })
+            } else {
+                None
+            }
+        }),
+    }
+}
+
+fn dock_preview_bounds(
+    side: DockSide,
+    dock_rails: &[(DockSide, Rectangle)],
+    dock_bodies: &[(DockSide, Rectangle)],
+) -> Option<Rectangle> {
+    dock_bodies
+        .iter()
+        .find_map(|&(dock_side, body)| {
+            if dock_side == side && body.width > 0.0 && body.height > 0.0 {
+                Some(body)
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            dock_rails.iter().find_map(|&(dock_side, rail)| {
+                if dock_side == side && rail.width > 0.0 && rail.height > 0.0 {
+                    Some(rail)
+                } else {
+                    None
+                }
+            })
+        })
+}
+
+fn split_zone_rect(pb: &PaneBounds, direction: Direction) -> Rectangle {
+    let quarter_w = pb.bounds.width / 4.0;
+    let quarter_h = (pb.bounds.height - TAB_STRIP_HEIGHT).max(0.0) / 4.0;
+    let body = Rectangle {
+        x: pb.bounds.x,
+        y: pb.bounds.y + TAB_STRIP_HEIGHT,
+        width: pb.bounds.width,
+        height: (pb.bounds.height - TAB_STRIP_HEIGHT).max(0.0),
+    };
+
+    match direction {
+        Direction::Left => Rectangle {
+            width: quarter_w,
+            ..body
+        },
+        Direction::Right => Rectangle {
+            x: body.x + body.width - quarter_w,
+            width: quarter_w,
+            y: body.y,
+            height: body.height,
+        },
+        Direction::Up => Rectangle {
+            height: quarter_h,
+            ..body
+        },
+        Direction::Down => Rectangle {
+            x: body.x,
+            y: body.y + body.height - quarter_h,
+            width: body.width,
+            height: quarter_h,
+        },
+    }
 }
 
 /// Compute the grid area from window size and dock state.
