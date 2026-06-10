@@ -8,6 +8,7 @@
 //! render as minimal rails. All styling resolves through
 //! `shared::design` tokens — no hardcoded colors or sizes.
 
+use iced::alignment::Horizontal;
 use iced::widget::canvas::{Frame, Geometry, Program, Stroke};
 use iced::widget::{
     Canvas, PaneGrid, button, canvas, column, container, mouse_area, pane_grid, row, space, stack,
@@ -426,11 +427,15 @@ fn tab_strip<'a>(
         strip = strip.push(tab);
     }
 
-    container(strip)
-        .width(Length::Fill)
-        .padding(SpacingToken::S1.value())
-        .style(move |_| bar_style(theme, BackgroundToken::Tertiary))
-        .into()
+    container(
+        container(strip)
+            .width(Length::Shrink)
+            .padding(SpacingToken::S1.value())
+            .style(move |_| bar_style(theme, BackgroundToken::Tertiary)),
+    )
+    .width(Length::Fill)
+    .align_x(Horizontal::Left)
+    .into()
 }
 
 fn surface_style(theme: OpenZoneTheme, token: BackgroundToken) -> container::Style {

@@ -535,6 +535,12 @@ fn tab_insert_marker(
         }),
     }?;
 
+    if let Some(drag) = drag
+        && strip.location == drag.source_location
+    {
+        return None;
+    }
+
     let tab_count = match strip.location {
         PanelLocation::Center(pane) => pane_bounds
             .iter()
