@@ -94,8 +94,9 @@ impl CounterStore {
 ///
 /// There is no per-panel clock id: Clock panels are pure observers of
 /// the single tick number, so the store's identity *is* its tick count.
-/// A single workspace-level subscription drives `tick` once per second
-/// and every Clock panel re-renders with the new value.
+/// In the multi-window daemon, the app-root subscription drives `tick`
+/// once per second; the single-window [`crate::workspace::run`] path
+/// owns the equivalent subscription on [`crate::workspace::WorkspaceApp`].
 #[derive(Debug, Default, Clone)]
 pub struct ClockStore {
     ticks: u64,
