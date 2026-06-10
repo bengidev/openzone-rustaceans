@@ -388,27 +388,29 @@ fn tab_strip<'a>(
             .drag_state
             .as_ref()
             .is_some_and(|drag| drag.source_location == location && drag.source_tab == index);
-        let label =
-            text(panel.title())
-                .size(TypeRole::LabelMd.size())
-                .style(move |_: &iced::Theme| text::Style {
-                    color: Some(if active {
-                        theme.foreground(ForegroundToken::Accent)
-                    } else {
-                        theme.foreground(ForegroundToken::Secondary)
-                    }),
-                });
-
-        let tab_body = container(label)
-            .padding([
-                SpacingToken::S1.value() as u16,
-                SpacingToken::S3.value() as u16,
-            ])
-            .style(move |_| tab_chip_style(theme, active, is_drag_source));
 
         let tab: Element<'a, WorkspaceMessage> = if is_drag_source {
-            tab_body.into()
+            // Collapse the source slot — the canvas ghost is the only visible chip.
+            space::horizontal().width(Length::Shrink).into()
         } else {
+            let label =
+                text(panel.title())
+                    .size(TypeRole::LabelMd.size())
+                    .style(move |_: &iced::Theme| text::Style {
+                        color: Some(if active {
+                            theme.foreground(ForegroundToken::Accent)
+                        } else {
+                            theme.foreground(ForegroundToken::Secondary)
+                        }),
+                    });
+
+            let tab_body = container(label)
+                .padding([
+                    SpacingToken::S1.value() as u16,
+                    SpacingToken::S3.value() as u16,
+                ])
+                .style(move |_| tab_chip_style(theme, active, false));
+
             mouse_area(tab_body)
                 .on_press(WorkspaceMessage::TabDragStarted {
                     location,
