@@ -403,6 +403,11 @@ fn build_secondary_workspace(stores: &mut AppStores, theme_mode: ThemeMode) -> W
 
 /// Reuse the first live counter slot when opening another window so both
 /// windows observe the same count after a store mutation.
+///
+/// Assumes slot 0 belongs to the primary workspace's center counter
+/// (monotonically allocated from 0; [`build_workspace`] creates the
+/// center counter before any dock counters). If no slot is live yet,
+/// allocates a fresh one.
 fn shared_counter_id(stores: &mut AppStores) -> CounterId {
     if stores.counter.count(0).is_some() {
         0
