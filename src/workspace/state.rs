@@ -20,7 +20,11 @@ use crate::workspace::pane_state::PaneState;
 use crate::workspace::panel::{ErasedMessage, Panel, PanelKind};
 use crate::workspace::stores::AppStores;
 
-/// The single-window workspace shell state.
+/// Per-window workspace shell state.
+///
+/// Each OS window owns one `Workspace` (pane tree, docks, focus). Domain
+/// data lives in app-root [`AppStores`], keyed by `window::Id` only at
+/// the daemon routing layer.
 pub struct Workspace {
     /// Iced's recursive split tree of panes (splits *between* panes).
     pub panes: pane_grid::State<PaneState>,
@@ -138,6 +142,7 @@ impl Workspace {
                 self.theme_mode = self.theme_mode.toggle();
                 self.theme = OpenZoneTheme::from_mode(self.theme_mode);
             }
+            WorkspaceMessage::NewWindow => {}
             WorkspaceMessage::ClockTick => {
                 // Single store-level Clock subscription: one mutation
                 // per tick, every Clock panel reads the same value.
@@ -249,11 +254,10 @@ impl Workspace {
         }
     }
 
-    /// Whether any Clock panel exists anywhere in the layout. Drives
-    /// the gating predicate for the single store-level Clock
-    /// subscription: when no Clock panel is open, the timer is stopped
-    /// and no orphan ticks reach the reducer.
-    fn has_clock_panel(&self) -> bool {
+    /// Whether any Clock panel exists anywhere in the layout. The
+    /// composition root uses this to gate the single app-level Clock
+    /// subscription across all workspace windows.
+    pub fn has_clock_panel(&self) -> bool {
         let center_has = self
             .panes
             .iter()
@@ -266,9 +270,11 @@ impl Workspace {
             .any(|side| pane_has_clock(&self.docks.get(*side).tabs))
     }
 
-    /// Batch every live panel's *panel-local* subscription, plus the
-    /// single store-level Clock tick (gated on any Clock panel
-    /// existing), into one workspace stream.
+    /// Batch every live panel's panel-local subscription for this window.
+    ///
+    /// The 1 Hz Clock tick is owned once at app root in the multi-window
+    /// daemon; the single-window [`crate::workspace::run`] harness adds
+    /// it back when composing subscriptions.
     pub fn subscription(&self) -> Subscription<WorkspaceMessage> {
         let mut streams = Vec::new();
 
@@ -280,13 +286,6 @@ impl Workspace {
         for side in DockSide::ALL {
             let location = PanelLocation::Dock(side);
             streams.extend(panel_subscriptions(location, &self.docks.get(side).tabs));
-        }
-
-        if self.has_clock_panel() {
-            streams.push(
-                iced::time::every(std::time::Duration::from_secs(1))
-                    .map(|_| WorkspaceMessage::ClockTick),
-            );
         }
 
         Subscription::batch(streams)
@@ -328,6 +327,7 @@ mod tests {
     use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
     use crate::workspace::command::{Chord, Mods};
     use crate::workspace::panel::{Panel, erase};
+    use crate::workspace::stores::CounterId;
 
     /// Build a two-tab workspace plus the app-root stores it views over.
     /// Returning the stores alongside lets each test run the reducer with
@@ -684,5 +684,61 @@ mod tests {
         assert_eq!(center_a, center_b);
         assert_eq!(center_a, dock_a);
         assert_eq!(center_a.get("ticks").and_then(|v| v.as_u64()), Some(2));
+    }
+    fn workspace_with_shared_counter(counter_id: CounterId) -> Workspace {
+        let center = PaneState::new(vec![
+            Box::new(CounterPanel::with_id(counter_id)) as Box<dyn Panel>,
+            Box::new(ClockPanel::new()) as Box<dyn Panel>,
+        ]);
+        Workspace::single_pane(center, ThemeMode::Dark)
+    }
+
+    /// Multi-window store fan-out: one Counter intent mutates the shared
+    /// app-root store once and every workspace observing that id reflects
+    /// the new value.
+    #[test]
+    fn two_workspaces_observe_same_counter_after_single_mutation() {
+        let mut stores = AppStores::new();
+        let counter_id = stores.counter.create();
+        let mut workspace_a = workspace_with_shared_counter(counter_id);
+        let workspace_b = workspace_with_shared_counter(counter_id);
+        let location_a = only_center_location(&workspace_a);
+
+        workspace_a.update(
+            WorkspaceMessage::Panel {
+                location: location_a,
+                tab: 0,
+                message: erase(crate::features::dummies::counter::CounterMessage::Increment),
+            },
+            &mut stores,
+        );
+
+        let snapshot_a = workspace_a.panes.iter().next().unwrap().1.tabs[0].snapshot(&stores);
+        let snapshot_b = workspace_b.panes.iter().next().unwrap().1.tabs[0].snapshot(&stores);
+
+        assert_eq!(snapshot_a, snapshot_b);
+        assert_eq!(snapshot_a.get("count").and_then(|v| v.as_i64()), Some(1));
+    }
+
+    /// App-root clock fan-out: one store tick is visible from Clock panels
+    /// in two independent workspace layouts.
+    #[test]
+    fn clock_store_tick_reaches_two_workspaces() {
+        let mut stores = AppStores::new();
+        let workspace_a = workspace_with_shared_counter(stores.counter.create());
+        let workspace_b = Workspace::single_pane(
+            PaneState::new(vec![Box::new(ClockPanel::new()) as Box<dyn Panel>]),
+            ThemeMode::Dark,
+        );
+
+        stores.clock.tick();
+        stores.clock.tick();
+        stores.clock.tick();
+
+        let clock_a = workspace_a.panes.iter().next().unwrap().1.tabs[1].snapshot(&stores);
+        let clock_b = workspace_b.panes.iter().next().unwrap().1.tabs[0].snapshot(&stores);
+
+        assert_eq!(clock_a, clock_b);
+        assert_eq!(clock_a.get("ticks").and_then(|v| v.as_u64()), Some(3));
     }
 }

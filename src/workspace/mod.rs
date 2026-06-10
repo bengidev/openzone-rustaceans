@@ -108,10 +108,18 @@ impl WorkspaceApp {
     }
 
     fn subscription(&self) -> Subscription<WorkspaceMessage> {
-        let panels = self.workspace.subscription();
-        let keyboard = iced::keyboard::listen()
-            .filter_map(|event| chord_from_keyboard_event(&event).map(WorkspaceMessage::Key));
-        Subscription::batch([panels, keyboard])
+        let mut streams = vec![
+            self.workspace.subscription(),
+            iced::keyboard::listen()
+                .filter_map(|event| chord_from_keyboard_event(&event).map(WorkspaceMessage::Key)),
+        ];
+        if self.workspace.has_clock_panel() {
+            streams.push(
+                iced::time::every(std::time::Duration::from_secs(1))
+                    .map(|_| WorkspaceMessage::ClockTick),
+            );
+        }
+        Subscription::batch(streams)
     }
 
     fn title(&self) -> String {
