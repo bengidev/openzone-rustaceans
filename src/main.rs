@@ -219,12 +219,22 @@ impl OpenZone {
             streams.push(onboarding.subscription().map(Message::Onboarding));
         }
 
-        for (window_id, workspace) in &self.workspaces {
+        let workspace_window_ids: Vec<window::Id> = self.workspaces.keys().copied().collect();
+        for window_id in workspace_window_ids {
+            let workspace = &self.workspaces[&window_id];
             streams.push(
                 workspace
                     .subscription()
-                    .with(*window_id)
+                    .with(window_id)
                     .map(|(window, message)| Message::Workspace { window, message }),
+            );
+            streams.push(
+                window::resize_events().filter_map(move |(id, size)| {
+                    (id == window_id).then(|| Message::Workspace {
+                        window: window_id,
+                        message: WorkspaceMessage::WindowResized(size),
+                    })
+                }),
             );
         }
 

@@ -33,7 +33,7 @@ pub mod view;
 pub use command::{Chord, Command, KeyRef, Keymap, Mods, chord_from_keyboard_event};
 pub use dock::{Dock, Docks};
 pub use drag::{Direction, DragState, DropTarget, SplitPaneTarget, TabStripTarget};
-use iced::{Subscription, Task, Theme};
+use iced::{Subscription, Task, Theme, window};
 pub use layout_store::{FileLayoutStore, LayoutStore, LayoutStoreError};
 pub use location::{DockSide, PanelLocation};
 pub use message::WorkspaceMessage;
@@ -113,6 +113,7 @@ impl WorkspaceApp {
             self.workspace.subscription(),
             iced::keyboard::listen()
                 .filter_map(|event| chord_from_keyboard_event(&event).map(WorkspaceMessage::Key)),
+            window::resize_events().map(|(_, size)| WorkspaceMessage::WindowResized(size)),
         ];
         if self.workspace.has_clock_panel() {
             streams.push(
