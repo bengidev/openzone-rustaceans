@@ -35,6 +35,14 @@ impl CounterPanel {
         }
     }
 
+    /// Bind this panel to an existing live counter slot.
+    ///
+    /// Used when a second workspace window should observe the same
+    /// app-root count as a panel in another window.
+    pub fn with_id(id: CounterId) -> Self {
+        Self { id }
+    }
+
     /// Rehydrate from a snapshot handle: read the persisted count and
     /// allocate a store slot seeded with it. A missing or malformed
     /// snapshot falls back to zero so a corrupt layout file degrades
