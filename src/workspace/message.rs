@@ -11,7 +11,7 @@
 use crate::workspace::command::{Chord, Command};
 use crate::workspace::location::PanelLocation;
 use crate::workspace::panel::ErasedMessage;
-use iced::Point;
+use iced::{Point, Size};
 use iced::widget::pane_grid;
 
 /// Everything the workspace reducer can react to.
@@ -65,6 +65,9 @@ pub enum WorkspaceMessage {
     CursorMoved(Point),
     /// Tab drag completed — apply the resolved drop target.
     TabDragDropped,
+    /// The hosting OS window was resized. Carries the new logical size so
+    /// drag hit-testing stays aligned with the rendered layout.
+    WindowResized(Size),
 }
 
 impl std::fmt::Debug for WorkspaceMessage {
@@ -104,6 +107,9 @@ impl std::fmt::Debug for WorkspaceMessage {
                 f.debug_tuple("CursorMoved").field(point).finish()
             }
             WorkspaceMessage::TabDragDropped => f.debug_tuple("TabDragDropped").finish(),
+            WorkspaceMessage::WindowResized(size) => {
+                f.debug_tuple("WindowResized").field(size).finish()
+            }
         }
     }
 }
