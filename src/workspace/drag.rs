@@ -13,7 +13,7 @@ use iced::{Point, Rectangle, Size};
 use crate::workspace::dock::Docks;
 use crate::workspace::layout_metrics::{
     self, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, MAIN_AXIS_SPACING, PANE_GRID_SPACING,
-    SIDE_DOCK_WIDTH, tab_strip_height,
+    SIDE_DOCK_WIDTH, estimated_tab_width, tab_chip_spacing, tab_strip_height, tab_strip_padding,
 };
 use crate::workspace::location::{DockSide, PanelLocation};
 use crate::workspace::pane_state::PaneState;
@@ -423,13 +423,26 @@ pub fn compute_drop_target(
     DropTarget::None
 }
 
+/// Left-packed x coordinate for an insert index (0..=tab_count).
+fn tab_insert_marker_x(strip: Rectangle, tab_count: usize, index: usize) -> f32 {
+    let idx = index.min(tab_count);
+    strip.x + tab_strip_padding() + idx as f32 * (estimated_tab_width() + tab_chip_spacing())
+}
+
 fn tab_insert_index(cursor_x: f32, strip: Rectangle, tab_count: usize) -> usize {
     if tab_count == 0 {
         return 0;
     }
-    let rel_x = (cursor_x - strip.x).clamp(0.0, strip.width);
-    let slot = strip.width / tab_count as f32;
-    ((rel_x / slot).floor() as usize).min(tab_count)
+
+    for index in 0..tab_count {
+        let left = tab_insert_marker_x(strip, tab_count, index);
+        let right = tab_insert_marker_x(strip, tab_count, index + 1);
+        if cursor_x < (left + right) / 2.0 {
+            return index;
+        }
+    }
+
+    tab_count
 }
 
 /// Pixel rectangle to highlight for a resolved [`DropTarget`].
@@ -486,12 +499,7 @@ fn tab_insert_marker(
         PanelLocation::Dock(side) => docks.get(side).tabs.len(),
     };
 
-    let x = if tab_count == 0 {
-        strip_rect.x
-    } else {
-        let clamped = strip.index.min(tab_count);
-        strip_rect.x + strip_rect.width * clamped as f32 / tab_count as f32
-    };
+    let x = tab_insert_marker_x(strip_rect, tab_count, strip.index);
 
     Some(Rectangle {
         x: x - TAB_INSERT_MARKER_WIDTH / 2.0,
@@ -751,5 +759,20 @@ mod tests {
         .unwrap();
         assert!((marker.width - TAB_INSERT_MARKER_WIDTH).abs() < 0.1);
         assert!((marker.height - strip.height).abs() < 0.1);
+        let expected_x = tab_insert_marker_x(strip, 3, 1) - TAB_INSERT_MARKER_WIDTH / 2.0;
+        assert!((marker.x - expected_x).abs() < 0.1);
+    }
+
+    #[test]
+    fn tab_insert_index_uses_left_packed_tab_widths() {
+        let strip = Rectangle::new(Point::new(50.0, 10.0), Size::new(600.0, 28.0));
+        let before_second = tab_insert_marker_x(strip, 2, 1) - 2.0;
+        let after_second = tab_insert_marker_x(strip, 2, 2) - 2.0;
+        assert_eq!(tab_insert_index(before_second, strip, 2), 1);
+        assert_eq!(tab_insert_index(after_second, strip, 2), 2);
+        assert_eq!(
+            tab_insert_index(strip.x + tab_strip_padding() + 1.0, strip, 2),
+            0
+        );
     }
 }

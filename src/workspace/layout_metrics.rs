@@ -49,6 +49,16 @@ pub fn estimated_tab_width() -> f32 {
     SpacingToken::S3.value() * 2.0 + 72.0
 }
 
+/// Inner padding of the tab-strip container (matches the view).
+pub fn tab_strip_padding() -> f32 {
+    SpacingToken::S1.value()
+}
+
+/// Horizontal gap between tab chips in a strip (matches the view).
+pub fn tab_chip_spacing() -> f32 {
+    SpacingToken::S1.value()
+}
+
 /// The framed workspace body between the title and status bars.
 pub fn workspace_area(window_size: Size) -> Rectangle {
     let top = title_bar_height();
