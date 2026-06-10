@@ -8,14 +8,19 @@
 //! render as minimal rails. All styling resolves through
 //! `shared::design` tokens — no hardcoded colors or sizes.
 
-use iced::widget::{PaneGrid, button, column, container, mouse_area, pane_grid, row, space, text};
-use iced::{Background, Border, Color, Element, Length};
+use iced::widget::{
+    Canvas, PaneGrid, button, canvas, column, container, mouse_area, pane_grid, row, space,
+    stack, text,
+};
+use iced::widget::canvas::{Frame, Geometry, Program, Stroke};
+use iced::{Background, Border, Color, Element, Length, Point, Rectangle, Size, mouse};
 
 use crate::shared::design::{
     BackgroundToken, BorderToken, ForegroundToken, OpenZoneTheme, RadiusToken, SpacingToken,
     ThemeMode, TypeRole,
 };
 use crate::workspace::dock::Dock;
+use crate::workspace::drag;
 use crate::workspace::location::{DockSide, PanelLocation};
 use crate::workspace::message::WorkspaceMessage;
 use crate::workspace::pane_state::PaneState;
@@ -57,10 +62,18 @@ pub fn view<'a>(workspace: &'a Workspace, stores: &'a AppStores) -> Element<'a, 
         .padding(SpacingToken::Hairline.value())
         .style(move |_| surface_style(theme, BackgroundToken::Primary));
 
-    column![title_bar(theme), framed, status_bar(theme, workspace)]
+    let shell = column![title_bar(theme), framed, status_bar(theme, workspace)]
         .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        .height(Length::Fill);
+
+    if workspace.drag_state.is_some() {
+        stack![shell, drop_overlay(workspace, theme)]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        shell.into()
+    }
 }
 
 fn center_pane_grid<'a>(
@@ -72,7 +85,14 @@ fn center_pane_grid<'a>(
         PaneGrid::new(&workspace.panes, |pane, pane_state, _is_maximized| {
             let location = PanelLocation::Center(pane);
             let focused = workspace.is_focused(location);
-            pane_grid::Content::new(pane_body(theme, location, pane_state, focused, stores))
+            pane_grid::Content::new(pane_body(
+                theme,
+                location,
+                pane_state,
+                focused,
+                stores,
+                workspace,
+            ))
         })
         .width(Length::Fill)
         .height(Length::Fill)
@@ -102,7 +122,7 @@ fn dock_side<'a>(
 
     if dock.open {
         let body = focus_on_click(
-            pane_body(theme, location, &dock.tabs, focused, stores),
+            pane_body(theme, location, &dock.tabs, focused, stores, workspace),
             location,
         );
         return container(body)
@@ -139,7 +159,7 @@ fn dock_bottom<'a>(
 
     if dock.open {
         let body = focus_on_click(
-            pane_body(theme, location, &dock.tabs, focused, stores),
+            pane_body(theme, location, &dock.tabs, focused, stores, workspace),
             location,
         );
         return container(body)
@@ -314,8 +334,9 @@ fn pane_body<'a>(
     pane_state: &'a PaneState,
     focused: bool,
     stores: &'a AppStores,
+    workspace: &'a Workspace,
 ) -> Element<'a, WorkspaceMessage> {
-    let strip = tab_strip(theme, location, pane_state);
+    let strip = tab_strip(theme, location, pane_state, workspace);
 
     let content: Element<'a, WorkspaceMessage> = match pane_state.active_panel() {
         Some(panel) => {
@@ -363,14 +384,18 @@ fn tab_strip<'a>(
     theme: OpenZoneTheme,
     location: PanelLocation,
     pane_state: &'a PaneState,
+    workspace: &'a Workspace,
 ) -> Element<'a, WorkspaceMessage> {
     let mut strip = row![].spacing(SpacingToken::S1.value());
 
     for (index, panel) in pane_state.tabs.iter().enumerate() {
         let active = index == pane_state.active;
+        let is_drag_source = workspace.drag_state.as_ref().is_some_and(|drag| {
+            drag.source_location == location && drag.source_tab == index
+        });
         let label = text(panel.title())
             .size(TypeRole::LabelMd.size())
-            .style(move |_| text::Style {
+            .style(move |_: &iced::Theme| text::Style {
                 color: Some(if active {
                     theme.foreground(ForegroundToken::Accent)
                 } else {
@@ -378,16 +403,24 @@ fn tab_strip<'a>(
                 }),
             });
 
-        let tab = button(label)
+        let tab_body = container(label)
             .padding([
                 SpacingToken::S1.value() as u16,
                 SpacingToken::S3.value() as u16,
             ])
-            .on_press(WorkspaceMessage::TabSelected {
-                location,
-                tab: index,
-            })
-            .style(move |_, _| tab_button_style(theme, active));
+            .style(move |_| tab_chip_style(theme, active, is_drag_source));
+
+        let tab: Element<'a, WorkspaceMessage> = if is_drag_source {
+            tab_body.into()
+        } else {
+            mouse_area(tab_body)
+                .on_press(WorkspaceMessage::TabDragStarted {
+                    location,
+                    tab: index,
+                })
+                .interaction(mouse::Interaction::Grab)
+                .into()
+        };
 
         strip = strip.push(tab);
     }
@@ -432,6 +465,97 @@ fn pane_frame_style(theme: OpenZoneTheme, border_token: BorderToken) -> containe
             },
             radius: RadiusToken::Xs.value().into(),
         },
+        ..container::Style::default()
+    }
+}
+
+fn drop_overlay<'a>(
+    workspace: &'a Workspace,
+    theme: OpenZoneTheme,
+) -> Element<'a, WorkspaceMessage> {
+    let Some(drag) = workspace.drag_state.as_ref() else {
+        return space::horizontal().width(Length::Shrink).into();
+    };
+
+    let grid = drag::compute_grid_bounds(&workspace.docks, workspace.window_size);
+    let pane_bounds = drag::compute_pane_bounds(&workspace.panes, grid);
+    let (rails, bodies) = drag::compute_dock_regions(&workspace.docks, workspace.window_size);
+    let Some(rect) = drag::preview_bounds(drag.target, &pane_bounds, &rails, &bodies) else {
+        return space::horizontal().width(Length::Shrink).into();
+    };
+
+    let accent = theme.foreground(ForegroundToken::Accent);
+    Canvas::new(DropOverlay { rect, accent })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DropOverlay {
+    rect: Rectangle,
+    accent: Color,
+}
+
+impl<Message> Program<Message> for DropOverlay {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &iced::Renderer,
+        _theme: &iced::Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        if self.rect.width <= 0.0 || self.rect.height <= 0.0 {
+            return Vec::new();
+        }
+
+        let mut frame = Frame::new(renderer, bounds.size());
+        let fill = Color {
+            a: 0.18,
+            ..self.accent
+        };
+        frame.fill_rectangle(
+            Point::new(self.rect.x, self.rect.y),
+            Size::new(self.rect.width, self.rect.height),
+            fill,
+        );
+        frame.stroke_rectangle(
+            Point::new(self.rect.x, self.rect.y),
+            Size::new(self.rect.width, self.rect.height),
+            Stroke::default().with_width(2.0).with_color(self.accent),
+        );
+        vec![frame.into_geometry()]
+    }
+}
+
+fn tab_chip_style(theme: OpenZoneTheme, active: bool, dragging: bool) -> container::Style {
+    let background = if dragging {
+        theme.background(BackgroundToken::Secondary)
+    } else if active {
+        theme.background(BackgroundToken::Elevated)
+    } else {
+        Color::TRANSPARENT
+    };
+
+    container::Style {
+        background: Some(Background::Color(background)),
+        border: Border {
+            color: theme.border(if active {
+                BorderToken::Subtle
+            } else {
+                BorderToken::Default
+            }),
+            width: if active || dragging { 1.0 } else { 0.0 },
+            radius: RadiusToken::Xs.value().into(),
+        },
+        text_color: Some(if active {
+            theme.foreground(ForegroundToken::Accent)
+        } else {
+            theme.foreground(ForegroundToken::Secondary)
+        }),
         ..container::Style::default()
     }
 }
