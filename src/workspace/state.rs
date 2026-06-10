@@ -256,8 +256,12 @@ impl Workspace {
 
         match drag.target {
             DropTarget::TabStrip(target) => {
+                let mut insert_at = target.index;
+                if source == target.location && tab_idx < insert_at {
+                    insert_at -= 1;
+                }
                 if let Some(ps) = self.pane_state_mut(target.location) {
-                    let insert_at = target.index.min(ps.tabs.len());
+                    let insert_at = insert_at.min(ps.tabs.len());
                     ps.tabs.insert(insert_at, panel);
                     ps.active = insert_at;
                 }
@@ -268,14 +272,20 @@ impl Workspace {
                     Direction::Left | Direction::Right => Axis::Vertical,
                     Direction::Up | Direction::Down => Axis::Horizontal,
                 };
-                let new_pane = PaneState::new(vec![panel]);
-                if let Some((split_pane, _)) =
-                    self.panes.split(axis, target.pane, PaneState::empty())
+                let new_pane_state = PaneState::new(vec![panel]);
+                if let Some((new_pane, _)) = self.panes.split(axis, target.pane, PaneState::empty())
                 {
-                    if let Some(ps) = self.panes.get_mut(split_pane) {
-                        *ps = new_pane;
+                    if let Some(ps) = self.panes.get_mut(new_pane) {
+                        *ps = new_pane_state;
                     }
-                    self.focused = PanelLocation::Center(split_pane);
+                    if matches!(target.direction, Direction::Left | Direction::Up) {
+                        self.panes.swap(new_pane, target.pane);
+                    }
+                    let focused_pane = match target.direction {
+                        Direction::Left | Direction::Up => target.pane,
+                        Direction::Right | Direction::Down => new_pane,
+                    };
+                    self.focused = PanelLocation::Center(focused_pane);
                 }
             }
             DropTarget::Dock(side) => {
@@ -1013,6 +1023,44 @@ mod tests {
         };
         assert_eq!(workspace.panes.get(pane).unwrap().len(), 1);
         assert_eq!(workspace.panes.get(pane).unwrap().tabs[0].title(), "Text");
+    }
+
+    #[test]
+    fn tab_drag_reorder_within_same_pane_adjusts_insert_index() {
+        let mut stores = AppStores::new();
+        let tabs: Vec<Box<dyn Panel>> = vec![
+            Box::new(CounterPanel::new(&mut stores)),
+            Box::new(TextPanel::new()),
+            Box::new(ClockPanel::new()),
+        ];
+        let mut workspace = Workspace::single_pane(PaneState::new(tabs), ThemeMode::Dark);
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+
+        {
+            let drag = workspace.drag_state.as_mut().unwrap();
+            drag.target = DropTarget::TabStrip(TabStripTarget { location, index: 2 });
+            drag.pointer_moved = true;
+        }
+
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center");
+        };
+        let titles: Vec<_> = workspace
+            .panes
+            .get(pane)
+            .unwrap()
+            .tabs
+            .iter()
+            .map(|t| t.title())
+            .collect();
+        assert_eq!(titles, vec!["Text", "Counter", "Clock"]);
     }
 
     #[test]
