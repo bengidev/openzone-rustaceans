@@ -125,10 +125,15 @@ would create contrived empty layers, so the shell is a flat top-level module.
 
 ## Build spine status
 
-Slices **1–4 of 6** are landed: single-window shell with three dummies (1),
-edge docks + commands + panel-first key routing (2), handle-only layout
-persistence with the `PanelRegistry` rehydrate path (3), and **app-root
-stores + intent lifting + a single store-level Clock subscription** (this
-slice, 4). Later slices add multi-window polish (5) and full custom tab
-drag-and-drop (6). No real feature enters until the shell is proven with the
-three dummies.
+All **6 of 6** slices are landed (#11–#16, parent epic #10):
+
+1. Single-window shell with three dummies
+2. Edge docks + commands + panel-first key routing
+3. Handle-only layout persistence with the `PanelRegistry` rehydrate path
+4. App-root stores + intent lifting + a single store-level Clock subscription
+5. Multi-window daemon with shared store fan-out
+6. Custom tab drag-and-drop (reorder, edge-split, dock drop, tear-off to new window)
+
+Cross-window tab drop into an **existing** window is a follow-up (#25; tear-off
+to a new window is shipped). No real feature enters until the shell is proven
+with the three dummies.
