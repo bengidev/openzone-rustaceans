@@ -42,7 +42,7 @@ pub use pane_state::PaneState;
 pub use panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
 pub use persistence::{LayoutSnapshot, capture, restore};
 pub use registry::{PanelConstructor, PanelRegistry};
-pub use state::Workspace;
+pub use state::{CrossWindowDropPreview, Workspace};
 pub use stores::{AppStores, ClockStore, CounterId, CounterStore};
 
 use crate::shared::design::ThemeMode;
@@ -116,6 +116,9 @@ impl WorkspaceApp {
                 .filter_map(|event| chord_from_keyboard_event(&event).map(WorkspaceMessage::Key)),
             window::resize_events().map(|(_, size)| WorkspaceMessage::WindowResized(size)),
         ];
+        if self.workspace.is_tab_drag_active() {
+            streams.push(crate::workspace::state::tab_drag_subscription());
+        }
         if self.workspace.has_clock_panel() {
             streams.push(
                 iced::time::every(std::time::Duration::from_secs(1))
