@@ -56,6 +56,8 @@ pub struct DragState {
     pub target: DropTarget,
     /// Window that should receive the drop when dragging across OS windows.
     pub target_window: Option<window::Id>,
+    /// OS window that last reported [`Self::cursor`], in that window's client coords.
+    pub cursor_window: Option<window::Id>,
     /// Latest cursor position in window coordinates.
     pub cursor: Point,
     /// Set once the cursor moves during an active drag. A drop with
@@ -70,6 +72,7 @@ impl DragState {
             source_tab,
             target: DropTarget::None,
             target_window: None,
+            cursor_window: None,
             cursor: Point::ORIGIN,
             pointer_moved: false,
         }
@@ -628,13 +631,13 @@ pub struct WindowDropGeometry {
     pub pane_bounds: Vec<PaneBounds>,
     pub dock_rails: Vec<(DockSide, Rectangle)>,
     pub dock_bodies: Vec<(DockSide, Rectangle)>,
-    pub docks: Docks,
 }
 
 /// Resolve a drop target within a single window's precomputed geometry.
 pub fn resolve_drop_target_in_geometry(
     cursor: Point,
     geometry: &WindowDropGeometry,
+    docks: &Docks,
     drag: Option<&DragState>,
 ) -> DropTarget {
     compute_drop_target(
@@ -643,7 +646,7 @@ pub fn resolve_drop_target_in_geometry(
         &geometry.pane_bounds,
         &geometry.dock_rails,
         &geometry.dock_bodies,
-        &geometry.docks,
+        docks,
         drag,
     )
 }
@@ -653,15 +656,19 @@ pub fn resolve_drop_target_in_geometry(
 /// `cursor` is in the matching window's client coordinates. Each entry's
 /// geometry is tested against `(0, 0, window_size.width, window_size.height)`.
 /// When no window contains the cursor, returns `(None, DropTarget::None)`.
+///
+/// Production routing resolves against the event window only (see
+/// [`crate::workspace::state::Workspace::resolve_drop_at`]); this helper exists
+/// for pure geometry tests with synthetic window layouts.
 pub fn pick_cross_window_drop_target(
     cursor: Point,
-    hit_windows: &[(window::Id, WindowDropGeometry)],
+    hit_windows: &[(window::Id, WindowDropGeometry, Docks)],
     drag: Option<&DragState>,
 ) -> (Option<window::Id>, DropTarget) {
-    for &(window_id, ref geometry) in hit_windows {
+    for &(window_id, ref geometry, ref docks) in hit_windows {
         let window_rect = Rectangle::new(Point::ORIGIN, geometry.window_size);
         if window_rect.contains(cursor) {
-            let target = resolve_drop_target_in_geometry(cursor, geometry, drag);
+            let target = resolve_drop_target_in_geometry(cursor, geometry, docks, drag);
             return (Some(window_id), target);
         }
     }
@@ -892,7 +899,6 @@ mod tests {
                 pane_bounds,
                 dock_rails: rails.to_vec(),
                 dock_bodies: bodies.to_vec(),
-                docks,
             },
         )
     }
@@ -919,7 +925,6 @@ mod tests {
                 pane_bounds,
                 dock_rails: rails.to_vec(),
                 dock_bodies: bodies.to_vec(),
-                docks,
             },
         )
     }
@@ -940,7 +945,16 @@ mod tests {
             pb.tab_strip.x + pb.tab_strip.width / 2.0,
             pb.tab_strip.y + pb.tab_strip.height / 2.0,
         );
-        let hit_windows = [(id_a, geom_a), (id_b, geom_b)];
+        let docks_a = Docks::empty();
+        let mut docks_b = Docks::new(
+            PaneState::new(vec![Box::new(
+                crate::features::dummies::text::TextPanel::new(),
+            )]),
+            PaneState::empty(),
+            PaneState::empty(),
+        );
+        docks_b.left.open = true;
+        let hit_windows = [(id_a, geom_a, docks_a), (id_b, geom_b, docks_b)];
         let (window_id, target) = pick_cross_window_drop_target(cursor, &hit_windows, None);
 
         assert_eq!(window_id, Some(id_b));
@@ -965,7 +979,16 @@ mod tests {
             .expect("left dock body");
         let cursor = Point::new(left_body.x + 12.0, left_body.y + tab_strip_height() / 2.0);
 
-        let (window_id, target) = pick_cross_window_drop_target(cursor, &[(id_b, geom_b)], None);
+        let mut docks_b = Docks::new(
+            PaneState::new(vec![Box::new(
+                crate::features::dummies::text::TextPanel::new(),
+            )]),
+            PaneState::empty(),
+            PaneState::empty(),
+        );
+        docks_b.left.open = true;
+        let (window_id, target) =
+            pick_cross_window_drop_target(cursor, &[(id_b, geom_b, docks_b)], None);
 
         assert_eq!(window_id, Some(id_b));
         assert!(matches!(
@@ -983,7 +1006,10 @@ mod tests {
         let id_b = window::Id::unique();
         let (_, geom_a) = compact_window_geometry();
         let (_, geom_b) = docked_window_geometry();
-        let hit_windows = [(id_a, geom_a), (id_b, geom_b)];
+        let hit_windows = [
+            (id_a, geom_a, Docks::empty()),
+            (id_b, geom_b, Docks::empty()),
+        ];
 
         let (window_id, target) =
             pick_cross_window_drop_target(Point::new(2000.0, 2000.0), &hit_windows, None);

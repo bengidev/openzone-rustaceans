@@ -33,8 +33,8 @@ use crate::shared::design::ThemeMode;
 use crate::workspace::state::tab_drag_subscription;
 use crate::workspace::stores::CounterId;
 use crate::workspace::{
-    AppStores, Chord, CrossWindowDropPreview, Docks, DropTarget, FileLayoutStore, LayoutStore,
-    Mods, PaneState, Panel, PanelKind, PanelRegistry, Workspace, WorkspaceMessage,
+    AppStores, Chord, CrossWindowDropPreview, Docks, DragState, DropTarget, FileLayoutStore,
+    LayoutStore, Mods, PaneState, Panel, PanelKind, PanelRegistry, Workspace, WorkspaceMessage,
     chord_from_keyboard_event,
 };
 
@@ -242,7 +242,7 @@ impl OpenZone {
         };
 
         if let Some(workspace) = self.workspaces.get_mut(&source) {
-            workspace.update_drag_target(target, cursor, target_window);
+            workspace.update_drag_target(target, cursor, target_window, event_window);
         }
 
         if let (Some(target_window), false) = (target_window, matches!(target, DropTarget::None))
@@ -257,6 +257,23 @@ impl OpenZone {
                 workspace.set_cross_window_drop_preview(preview);
             }
         }
+    }
+
+    fn resolve_drag_drop_target(&self, drag: &DragState) -> (Option<window::Id>, DropTarget) {
+        let Some(event_window) = drag.cursor_window else {
+            return (drag.target_window, drag.target);
+        };
+
+        let Some(workspace) = self.workspaces.get(&event_window) else {
+            return (None, DropTarget::None);
+        };
+
+        if !workspace.contains_client_point(drag.cursor) {
+            return (None, DropTarget::None);
+        }
+
+        let target = workspace.resolve_drop_at(drag.cursor, Some(drag));
+        (Some(event_window), target)
     }
 
     fn handle_tab_drag_dropped(&mut self, source: window::Id) -> Task<Message> {
@@ -275,11 +292,15 @@ impl OpenZone {
 
         if matches!(drag.target, DropTarget::None) && !drag.pointer_moved {
             if let Some(workspace) = self.workspaces.get_mut(&source) {
-                workspace.drag_state = Some(drag.clone());
                 workspace.finish_local_tab_drag(drag, &mut self.stores);
             }
             return Task::none();
         }
+
+        let (target_window, target) = self.resolve_drag_drop_target(&drag);
+        let mut drag = drag;
+        drag.target = target;
+        drag.target_window = target_window;
 
         let target_window = drag.target_window.unwrap_or(source);
 
@@ -722,7 +743,7 @@ mod cross_window_tab_drop_tests {
     }
 
     #[test]
-    fn handle_tab_drag_dropped_outside_all_windows_still_tears_off() {
+    fn handle_tab_drag_dropped_click_without_move_clears_drag_state() {
         let (mut app, window_a, _window_b) = two_workspace_app();
         let source_location = center_location(&app.workspaces[&window_a]);
         app.workspaces.get_mut(&window_a).unwrap().update(
@@ -732,6 +753,204 @@ mod cross_window_tab_drop_tests {
             },
             &mut app.stores,
         );
+
+        let _task = app.handle_tab_drag_dropped(window_a);
+
+        assert!(app.workspaces[&window_a].drag_state.is_none());
+        let titles: Vec<_> = app.workspaces[&window_a]
+            .panes
+            .iter()
+            .next()
+            .unwrap()
+            .1
+            .tabs
+            .iter()
+            .map(|p| p.title())
+            .collect();
+        assert_eq!(titles, vec!["Counter", "Text"]);
+    }
+
+    #[test]
+    fn route_tab_drag_cursor_clears_target_when_cursor_leaves_window() {
+        let (mut app, window_a, window_b) = two_workspace_app();
+        let source_location = center_location(&app.workspaces[&window_a]);
+        app.workspaces.get_mut(&window_a).unwrap().update(
+            WorkspaceMessage::TabDragStarted {
+                location: source_location,
+                tab: 0,
+            },
+            &mut app.stores,
+        );
+
+        let pane_b = *app.workspaces[&window_b].panes.iter().next().unwrap().0;
+        let grid = crate::workspace::drag::compute_grid_bounds(
+            &app.workspaces[&window_b].docks,
+            app.workspaces[&window_b].window_size,
+        );
+        let pane_bounds =
+            crate::workspace::drag::compute_pane_bounds(&app.workspaces[&window_b].panes, grid);
+        let pb = &pane_bounds[0];
+        let inside = iced::Point::new(pb.tab_strip.x + 20.0, pb.tab_strip.y + 4.0);
+        app.route_tab_drag_cursor(window_a, window_b, inside);
+        assert_eq!(
+            app.workspaces[&window_a]
+                .drag_state
+                .as_ref()
+                .unwrap()
+                .target_window,
+            Some(window_b)
+        );
+
+        let outside = iced::Point::new(
+            app.workspaces[&window_b].window_size.width + 40.0,
+            app.workspaces[&window_b].window_size.height + 40.0,
+        );
+        app.route_tab_drag_cursor(window_a, window_b, outside);
+
+        let drag = app.workspaces[&window_a].drag_state.as_ref().unwrap();
+        assert_eq!(drag.target_window, None);
+        assert_eq!(drag.target, DropTarget::None);
+        assert!(
+            app.workspaces[&window_b]
+                .cross_window_drop_preview
+                .is_none()
+        );
+        let _ = pane_b;
+    }
+
+    #[test]
+    fn handle_tab_drag_dropped_revalidates_stale_target_from_last_cursor() {
+        let (mut app, window_a, window_b) = two_workspace_app();
+        let source_location = center_location(&app.workspaces[&window_a]);
+        app.workspaces.get_mut(&window_a).unwrap().update(
+            WorkspaceMessage::TabDragStarted {
+                location: source_location,
+                tab: 0,
+            },
+            &mut app.stores,
+        );
+
+        let pane_b = *app.workspaces[&window_b].panes.iter().next().unwrap().0;
+        let outside_b = {
+            let size = app.workspaces[&window_b].window_size;
+            iced::Point::new(size.width + 100.0, size.height + 100.0)
+        };
+        {
+            let drag = app
+                .workspaces
+                .get_mut(&window_a)
+                .unwrap()
+                .drag_state
+                .as_mut()
+                .unwrap();
+            drag.target = DropTarget::TabStrip(TabStripTarget {
+                location: PanelLocation::Center(pane_b),
+                index: 1,
+            });
+            drag.target_window = Some(window_b);
+            drag.pointer_moved = true;
+            drag.cursor_window = Some(window_b);
+            drag.cursor = outside_b;
+        }
+
+        let _task = app.handle_tab_drag_dropped(window_a);
+
+        let titles_a: Vec<_> = app.workspaces[&window_a]
+            .panes
+            .iter()
+            .next()
+            .unwrap()
+            .1
+            .tabs
+            .iter()
+            .map(|p| p.title())
+            .collect();
+        assert_eq!(titles_a, vec!["Text"]);
+        let titles_b: Vec<_> = app.workspaces[&window_b]
+            .panes
+            .iter()
+            .next()
+            .unwrap()
+            .1
+            .tabs
+            .iter()
+            .map(|p| p.title())
+            .collect();
+        assert_eq!(titles_b, vec!["Clock"]);
+    }
+
+    #[test]
+    fn handle_tab_drag_dropped_cross_window_dock() {
+        let (mut app, window_a, window_b) = two_workspace_app();
+        {
+            let workspace_b = app.workspaces.get_mut(&window_b).unwrap();
+            workspace_b.docks.left.tabs = PaneState::new(vec![Box::new(TextPanel::new())]);
+            workspace_b.docks.left.open = true;
+        }
+        let source_location = center_location(&app.workspaces[&window_a]);
+        app.workspaces.get_mut(&window_a).unwrap().update(
+            WorkspaceMessage::TabDragStarted {
+                location: source_location,
+                tab: 0,
+            },
+            &mut app.stores,
+        );
+
+        let grid = crate::workspace::drag::compute_grid_bounds(
+            &app.workspaces[&window_b].docks,
+            app.workspaces[&window_b].window_size,
+        );
+        let (_, bodies) = crate::workspace::drag::compute_dock_regions(
+            &app.workspaces[&window_b].docks,
+            app.workspaces[&window_b].window_size,
+        );
+        let (_, left_body) = bodies
+            .iter()
+            .find(|(side, _)| *side == crate::workspace::DockSide::Left)
+            .expect("left dock body");
+        let cursor = iced::Point::new(
+            left_body.x + 12.0,
+            left_body.y + crate::workspace::layout_metrics::tab_strip_height() / 2.0,
+        );
+        app.route_tab_drag_cursor(window_a, window_b, cursor);
+
+        let _task = app.handle_tab_drag_dropped(window_a);
+
+        assert_eq!(
+            app.workspaces[&window_b].docks.left.tabs.tabs[0].title(),
+            "Counter"
+        );
+        assert_eq!(
+            app.workspaces[&window_a]
+                .panes
+                .iter()
+                .next()
+                .unwrap()
+                .1
+                .tabs
+                .iter()
+                .map(|p| p.title())
+                .collect::<Vec<_>>(),
+            vec!["Text"]
+        );
+        let _ = grid;
+    }
+
+    #[test]
+    fn handle_tab_drag_dropped_outside_queues_tear_off_panel() {
+        let (mut app, window_a, _window_b) = two_workspace_app();
+        let source_location = center_location(&app.workspaces[&window_a]);
+        app.workspaces.get_mut(&window_a).unwrap().update(
+            WorkspaceMessage::TabDragStarted {
+                location: source_location,
+                tab: 0,
+            },
+            &mut app.stores,
+        );
+        let outside_a = {
+            let size = app.workspaces[&window_a].window_size;
+            iced::Point::new(size.width + 50.0, size.height + 50.0)
+        };
         {
             let drag = app
                 .workspaces
@@ -743,6 +962,54 @@ mod cross_window_tab_drop_tests {
             drag.target = DropTarget::None;
             drag.target_window = None;
             drag.pointer_moved = true;
+            drag.cursor_window = Some(window_a);
+            drag.cursor = outside_a;
+        }
+
+        let _task = app.handle_tab_drag_dropped(window_a);
+
+        let titles_a: Vec<_> = app.workspaces[&window_a]
+            .panes
+            .iter()
+            .next()
+            .unwrap()
+            .1
+            .tabs
+            .iter()
+            .map(|p| p.title())
+            .collect();
+        assert_eq!(titles_a, vec!["Text"]);
+        assert_eq!(app.workspaces.len(), 3);
+    }
+
+    #[test]
+    fn handle_tab_drag_dropped_outside_all_windows_still_tears_off() {
+        let (mut app, window_a, _window_b) = two_workspace_app();
+        let source_location = center_location(&app.workspaces[&window_a]);
+        app.workspaces.get_mut(&window_a).unwrap().update(
+            WorkspaceMessage::TabDragStarted {
+                location: source_location,
+                tab: 0,
+            },
+            &mut app.stores,
+        );
+        let outside_a = {
+            let size = app.workspaces[&window_a].window_size;
+            iced::Point::new(size.width + 50.0, size.height + 50.0)
+        };
+        {
+            let drag = app
+                .workspaces
+                .get_mut(&window_a)
+                .unwrap()
+                .drag_state
+                .as_mut()
+                .unwrap();
+            drag.target = DropTarget::None;
+            drag.target_window = None;
+            drag.pointer_moved = true;
+            drag.cursor_window = Some(window_a);
+            drag.cursor = outside_a;
         }
 
         let _task = app.handle_tab_drag_dropped(window_a);

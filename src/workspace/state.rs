@@ -19,6 +19,7 @@ use crate::workspace::command::{Chord, Command, Keymap};
 use crate::workspace::dock::Docks;
 use crate::workspace::drag::{
     Direction, DockRegions, DragState, DropTarget, PaneBounds, SplitPaneTarget, TabStripTarget,
+    WindowDropGeometry, resolve_drop_target_in_geometry,
 };
 use crate::workspace::location::{DockSide, PanelLocation};
 use crate::workspace::message::WorkspaceMessage;
@@ -138,16 +139,19 @@ impl Workspace {
 
     /// Resolve a drop target for `cursor` in this window's client coordinates.
     pub fn resolve_drop_at(&self, cursor: Point, drag: Option<&DragState>) -> DropTarget {
+        resolve_drop_target_in_geometry(cursor, &self.drop_geometry(), &self.docks, drag)
+    }
+
+    /// Precomputed geometry bundle for cross-window drop hit-testing.
+    pub fn drop_geometry(&self) -> WindowDropGeometry {
         let (grid, pane_bounds, (rails, bodies)) = self.drag_geometry();
-        crate::workspace::drag::compute_drop_target(
-            cursor,
-            grid,
-            &pane_bounds,
-            &rails,
-            &bodies,
-            &self.docks,
-            drag,
-        )
+        WindowDropGeometry {
+            window_size: self.window_size,
+            grid_bounds: grid,
+            pane_bounds,
+            dock_rails: rails.to_vec(),
+            dock_bodies: bodies.to_vec(),
+        }
     }
 
     /// Whether `cursor` lies inside this window's client area.
@@ -161,12 +165,14 @@ impl Workspace {
         target: DropTarget,
         cursor: Point,
         target_window: Option<window::Id>,
+        cursor_window: window::Id,
     ) {
         if let Some(drag) = self.drag_state.as_mut() {
             drag.pointer_moved = true;
             drag.cursor = cursor;
             drag.target = target;
             drag.target_window = target_window;
+            drag.cursor_window = Some(cursor_window);
         }
     }
 
@@ -1320,6 +1326,30 @@ mod tests {
             .map(|t| t.title())
             .collect();
         assert_eq!(titles, vec!["Text", "Counter"]);
+    }
+
+    #[test]
+    fn incoming_panel_drop_returns_panel_for_missing_pane() {
+        let mut stores = AppStores::new();
+        let mut target = Workspace::single_pane(
+            PaneState::new(vec![Box::new(TextPanel::new())]),
+            ThemeMode::Dark,
+        );
+        let pane0 = *target.panes.iter().next().unwrap().0;
+        let (missing_pane, _) = target
+            .panes
+            .split(Axis::Vertical, pane0, PaneState::empty())
+            .expect("split for stale pane handle");
+        target.panes.close(missing_pane);
+        let panel = Box::new(CounterPanel::new(&mut stores)) as Box<dyn Panel>;
+        let failed = target.apply_incoming_panel_drop(
+            panel,
+            DropTarget::TabStrip(TabStripTarget {
+                location: PanelLocation::Center(missing_pane),
+                index: 0,
+            }),
+        );
+        assert_eq!(failed.unwrap().title(), "Counter");
     }
 
     #[test]
