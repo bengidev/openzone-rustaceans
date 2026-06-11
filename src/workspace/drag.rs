@@ -669,7 +669,6 @@ pub fn pick_cross_window_drop_target(
     (None, DropTarget::None)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -878,7 +877,6 @@ mod tests {
         );
     }
 
-
     fn compact_window_geometry() -> (pane_grid::Pane, WindowDropGeometry) {
         let (panes, pane) = single_pane_grid();
         let window_size = Size::new(400.0, 300.0);
@@ -932,10 +930,17 @@ mod tests {
         let id_b = window::Id::unique();
         let (pane_a, geom_a) = compact_window_geometry();
         let (pane_b, geom_b) = docked_window_geometry();
+        let pb = geom_b
+            .pane_bounds
+            .iter()
+            .find(|pb| pb.pane == pane_b)
+            .expect("pane bounds");
+        // Outside the compact 400px-wide window, inside the docked window tab strip.
+        let cursor = Point::new(
+            pb.tab_strip.x + pb.tab_strip.width / 2.0,
+            pb.tab_strip.y + pb.tab_strip.height / 2.0,
+        );
         let hit_windows = [(id_a, geom_a), (id_b, geom_b)];
-
-        // Outside the compact 400px-wide window, inside the 800px docked window tab strip.
-        let cursor = Point::new(500.0, tab_strip_height() / 2.0);
         let (window_id, target) = pick_cross_window_drop_target(cursor, &hit_windows, None);
 
         assert_eq!(window_id, Some(id_b));
@@ -958,16 +963,18 @@ mod tests {
             .iter()
             .find(|(side, _)| *side == DockSide::Left)
             .expect("left dock body");
-        let cursor = Point::new(
-            left_body.x + 12.0,
-            left_body.y + tab_strip_height() / 2.0,
-        );
+        let cursor = Point::new(left_body.x + 12.0, left_body.y + tab_strip_height() / 2.0);
 
-        let (window_id, target) =
-            pick_cross_window_drop_target(cursor, &[(id_b, geom_b)], None);
+        let (window_id, target) = pick_cross_window_drop_target(cursor, &[(id_b, geom_b)], None);
 
         assert_eq!(window_id, Some(id_b));
-        assert!(matches!(target, DropTarget::TabStrip(TabStripTarget { location: PanelLocation::Dock(DockSide::Left), .. })));
+        assert!(matches!(
+            target,
+            DropTarget::TabStrip(TabStripTarget {
+                location: PanelLocation::Dock(DockSide::Left),
+                ..
+            })
+        ));
     }
 
     #[test]
