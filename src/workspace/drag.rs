@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Tab drag-and-drop subsystem.
 //!
 //! Isolates bounds capture and hit testing for custom tab DnD on top of
@@ -13,7 +11,8 @@ use iced::{Point, Rectangle, Size};
 use crate::workspace::dock::Docks;
 use crate::workspace::layout_metrics::{
     self, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, MAIN_AXIS_SPACING, PANE_GRID_SPACING,
-    SIDE_DOCK_WIDTH, estimated_tab_width, tab_chip_spacing, tab_strip_height, tab_strip_padding,
+    SIDE_DOCK_WIDTH, dock_horizontal_extent, estimated_tab_width, tab_chip_spacing,
+    tab_strip_height, tab_strip_padding,
 };
 use crate::workspace::location::{DockSide, PanelLocation};
 use crate::workspace::pane_state::PaneState;
@@ -291,16 +290,6 @@ pub fn compute_dock_regions(docks: &Docks, window_size: Size) -> DockRegions {
     ];
 
     (rails, bodies)
-}
-
-fn dock_horizontal_extent(dock: &crate::workspace::dock::Dock) -> f32 {
-    if dock.is_empty() {
-        0.0
-    } else if dock.open {
-        SIDE_DOCK_WIDTH
-    } else {
-        DOCK_RAIL_THICKNESS
-    }
 }
 
 fn omit_tab_at(location: PanelLocation, drag: Option<&DragState>) -> Option<usize> {

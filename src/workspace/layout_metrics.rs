@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Shell layout metrics shared by the workspace view and drag geometry.
 //!
 //! Every constant here is derived from the same design tokens the view
@@ -82,7 +80,7 @@ pub fn framed_inner(window_size: Size) -> Rectangle {
     }
 }
 
-fn dock_horizontal_extent(dock: &Dock) -> f32 {
+pub fn dock_horizontal_extent(dock: &Dock) -> f32 {
     if dock.is_empty() {
         0.0
     } else if dock.open {

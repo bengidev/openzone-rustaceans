@@ -138,8 +138,12 @@ impl OpenZone {
 
     /// Open the first workspace window and close onboarding.
     fn enter_workspace(&mut self) -> Task<Message> {
-        let (workspace_window, open) = window::open(workspace_window_settings());
-        let workspace = self.restore_or_build_workspace();
+        let settings = workspace_window_settings();
+        let size = settings.size;
+        let (workspace_window, open) = window::open(settings);
+        let workspace = self
+            .restore_or_build_workspace()
+            .with_window_size(size);
         self.workspaces.insert(workspace_window, workspace);
 
         let close = match self.onboarding_window.take() {
@@ -156,20 +160,26 @@ impl OpenZone {
     /// Open another workspace window with an independent layout that
     /// still observes the same app-root Counter and Clock stores.
     fn open_additional_workspace(&mut self) -> Task<Message> {
-        let (workspace_window, open) = window::open(workspace_window_settings());
+        let settings = workspace_window_settings();
+        let size = settings.size;
+        let (workspace_window, open) = window::open(settings);
         self.workspaces.insert(
             workspace_window,
-            build_secondary_workspace(&mut self.stores, self.theme_mode),
+            build_secondary_workspace(&mut self.stores, self.theme_mode)
+                .with_window_size(size),
         );
         open.discard()
     }
 
     /// Open a workspace window hosting a single tab torn off from another.
     fn open_workspace_with_panel(&mut self, panel: Box<dyn Panel>) -> Task<Message> {
-        let (workspace_window, open) = window::open(workspace_window_settings());
+        let settings = workspace_window_settings();
+        let size = settings.size;
+        let (workspace_window, open) = window::open(settings);
         self.workspaces.insert(
             workspace_window,
-            Workspace::single_pane(PaneState::new(vec![panel]), self.theme_mode),
+            Workspace::single_pane(PaneState::new(vec![panel]), self.theme_mode)
+                .with_window_size(size),
         );
         open.discard()
     }

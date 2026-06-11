@@ -409,7 +409,7 @@ fn tab_strip<'a>(
                 SpacingToken::S1.value() as u16,
                 SpacingToken::S3.value() as u16,
             ])
-            .style(move |_| tab_chip_style(theme, active, false));
+            .style(move |_| tab_chip_style(theme, active));
 
         tab_elements.push(
             mouse_area(tab_body)
@@ -597,10 +597,8 @@ impl<Message> Program<Message> for DropOverlay {
     }
 }
 
-fn tab_chip_style(theme: OpenZoneTheme, active: bool, dragging: bool) -> container::Style {
-    let background = if dragging {
-        theme.background(BackgroundToken::Secondary)
-    } else if active {
+fn tab_chip_style(theme: OpenZoneTheme, active: bool) -> container::Style {
+    let background = if active {
         theme.background(BackgroundToken::Elevated)
     } else {
         Color::TRANSPARENT
@@ -614,7 +612,7 @@ fn tab_chip_style(theme: OpenZoneTheme, active: bool, dragging: bool) -> contain
             } else {
                 BorderToken::Default
             }),
-            width: if active || dragging { 1.0 } else { 0.0 },
+            width: if active { 1.0 } else { 0.0 },
             radius: RadiusToken::Xs.value().into(),
         },
         text_color: Some(if active {

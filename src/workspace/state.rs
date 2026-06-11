@@ -111,6 +111,12 @@ impl Workspace {
         self.torn_off_panel.take()
     }
 
+    /// Seed logical window size before the first resize event arrives.
+    pub fn with_window_size(mut self, size: Size) -> Self {
+        self.window_size = size;
+        self
+    }
+
     /// The pane backing a location, if it still exists.
     fn pane_state(&self, location: PanelLocation) -> Option<&PaneState> {
         match location {
@@ -193,9 +199,7 @@ impl Workspace {
             }
             WorkspaceMessage::CursorMoved(cursor) => {
                 if let Some(drag) = self.drag_state.as_ref() {
-                    let grid =
-                        crate::workspace::drag::compute_grid_bounds(&self.docks, self.window_size);
-                    let (pane_bounds, (rails, bodies)) = self.drag_geometry();
+                    let (grid, pane_bounds, (rails, bodies)) = self.drag_geometry();
                     let target = crate::workspace::drag::compute_drop_target(
                         cursor,
                         grid,
@@ -224,12 +228,12 @@ impl Workspace {
     }
 
     /// Pane and dock rectangles used for drag hit-testing and preview.
-    fn drag_geometry(&self) -> (Vec<PaneBounds>, DockRegions) {
+    fn drag_geometry(&self) -> (iced::Rectangle, Vec<PaneBounds>, DockRegions) {
         let grid = crate::workspace::drag::compute_grid_bounds(&self.docks, self.window_size);
         let pane_bounds = crate::workspace::drag::compute_pane_bounds(&self.panes, grid);
         let dock_regions =
             crate::workspace::drag::compute_dock_regions(&self.docks, self.window_size);
-        (pane_bounds, dock_regions)
+        (grid, pane_bounds, dock_regions)
     }
 
     /// Apply a completed tab drag operation.
@@ -242,7 +246,6 @@ impl Workspace {
             return;
         }
 
-        // Extract the dragged panel from its source.
         let source = drag.source_location;
         let tab_idx = drag.source_tab;
         let panel = self.pane_state_mut(source).and_then(|ps| {
@@ -257,7 +260,6 @@ impl Workspace {
             return;
         };
 
-        // Clamp active index if the removed tab was active.
         if let Some(ps) = self.pane_state_mut(source)
             && ps.active >= ps.tabs.len()
             && !ps.tabs.is_empty()
@@ -265,39 +267,62 @@ impl Workspace {
             ps.active = ps.tabs.len() - 1;
         }
 
-        match drag.target {
-            DropTarget::TabStrip(target) => {
-                let mut insert_at = target.index;
-                if source == target.location && tab_idx < insert_at {
+        if let Some(panel) = self.commit_drop(drag.target, source, tab_idx, panel) {
+            self.restore_tab_at_source(source, tab_idx, panel);
+            return;
+        }
+
+        self.cleanup_empty_source(source);
+    }
+
+    /// Place the dragged panel at the resolved target. Returns `Some(panel)`
+    /// when the target cannot be applied so the caller can restore the source tab.
+    fn commit_drop(
+        &mut self,
+        target: DropTarget,
+        source: PanelLocation,
+        tab_idx: usize,
+        panel: Box<dyn Panel>,
+    ) -> Option<Box<dyn Panel>> {
+        match target {
+            DropTarget::TabStrip(strip_target) => {
+                let mut insert_at = strip_target.index;
+                if source == strip_target.location && tab_idx < insert_at {
                     insert_at -= 1;
                 }
-                if let Some(ps) = self.pane_state_mut(target.location) {
-                    let insert_at = insert_at.min(ps.tabs.len());
-                    ps.tabs.insert(insert_at, panel);
-                    ps.active = insert_at;
-                }
-                self.focused = target.location;
+                let Some(pane_state) = self.pane_state_mut(strip_target.location) else {
+                    return Some(panel);
+                };
+                let insert_at = insert_at.min(pane_state.tabs.len());
+                pane_state.tabs.insert(insert_at, panel);
+                pane_state.active = insert_at;
+                self.focused = strip_target.location;
+                None
             }
-            DropTarget::SplitPane(target) => {
-                let axis = match target.direction {
+            DropTarget::SplitPane(split_target) => {
+                let axis = match split_target.direction {
                     Direction::Left | Direction::Right => Axis::Vertical,
                     Direction::Up | Direction::Down => Axis::Horizontal,
                 };
-                let new_pane_state = PaneState::new(vec![panel]);
-                if let Some((new_pane, _)) = self.panes.split(axis, target.pane, PaneState::empty())
-                {
-                    if let Some(ps) = self.panes.get_mut(new_pane) {
-                        *ps = new_pane_state;
-                    }
-                    if matches!(target.direction, Direction::Left | Direction::Up) {
-                        self.panes.swap(new_pane, target.pane);
-                    }
-                    let focused_pane = match target.direction {
-                        Direction::Left | Direction::Up => target.pane,
-                        Direction::Right | Direction::Down => new_pane,
-                    };
-                    self.focused = PanelLocation::Center(focused_pane);
+                let mut new_pane_state = PaneState::new(vec![panel]);
+                let Some((new_pane, _)) =
+                    self.panes
+                        .split(axis, split_target.pane, PaneState::empty())
+                else {
+                    return Some(new_pane_state.tabs.remove(0));
+                };
+                if let Some(pane_state) = self.panes.get_mut(new_pane) {
+                    *pane_state = new_pane_state;
                 }
+                if matches!(split_target.direction, Direction::Left | Direction::Up) {
+                    self.panes.swap(new_pane, split_target.pane);
+                }
+                let focused_pane = match split_target.direction {
+                    Direction::Left | Direction::Up => split_target.pane,
+                    Direction::Right | Direction::Down => new_pane,
+                };
+                self.focused = PanelLocation::Center(focused_pane);
+                None
             }
             DropTarget::Dock(side) => {
                 let dock = self.docks.get_mut(side);
@@ -305,14 +330,26 @@ impl Workspace {
                 dock.tabs.active = dock.tabs.tabs.len() - 1;
                 dock.open = true;
                 self.focused = PanelLocation::Dock(side);
+                None
             }
             DropTarget::None => {
                 self.torn_off_panel = Some(panel);
+                None
             }
         }
+    }
 
-        // Clean up empty source panes/docks.
-        self.cleanup_empty_source(source);
+    fn restore_tab_at_source(
+        &mut self,
+        source: PanelLocation,
+        tab_idx: usize,
+        panel: Box<dyn Panel>,
+    ) {
+        if let Some(pane_state) = self.pane_state_mut(source) {
+            let restore_at = tab_idx.min(pane_state.tabs.len());
+            pane_state.tabs.insert(restore_at, panel);
+            pane_state.active = restore_at;
+        }
     }
 
     /// Remove an empty center pane or collapse an empty dock after a
@@ -329,10 +366,7 @@ impl Workspace {
 
         match location {
             PanelLocation::Center(pane) => {
-                if self.panes.len() > 1
-                    && let Some((_, sibling)) = self.panes.close(pane)
-                    && self.focused == PanelLocation::Center(pane)
-                {
+                if let Some((_, sibling)) = self.panes.close(pane) {
                     self.focused = PanelLocation::Center(sibling);
                 }
             }
@@ -1097,6 +1131,37 @@ mod tests {
         assert_eq!(workspace.panes.get(pane).unwrap().len(), 2);
         assert_eq!(workspace.panes.get(pane).unwrap().active, 1);
         assert_eq!(workspace.focused, location);
+    }
+
+
+    #[test]
+    fn tab_drag_split_failure_restores_panel() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+
+        workspace.apply_command(Command::SplitFocused, &mut stores);
+        let panes: Vec<pane_grid::Pane> = workspace.panes.iter().map(|(p, _)| *p).collect();
+        let stale_pane = panes[1];
+        workspace.panes.close(stale_pane);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+
+        workspace.drag_state.as_mut().unwrap().target = DropTarget::SplitPane(SplitPaneTarget {
+            pane: stale_pane,
+            direction: Direction::Right,
+        });
+        workspace.drag_state.as_mut().unwrap().pointer_moved = true;
+
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center");
+        };
+        assert_eq!(workspace.panes.get(pane).unwrap().len(), 2);
+        assert_eq!(workspace.panes.get(pane).unwrap().tabs[0].title(), "Counter");
     }
 
     #[test]
