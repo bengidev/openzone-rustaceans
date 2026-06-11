@@ -11,6 +11,7 @@
 use iced::event::{self, Event};
 use iced::mouse;
 use iced::widget::pane_grid::{self, Axis};
+use iced::window;
 use iced::{Point, Size, Subscription};
 
 use crate::shared::design::{OpenZoneTheme, ThemeMode};
@@ -24,6 +25,15 @@ use crate::workspace::message::WorkspaceMessage;
 use crate::workspace::pane_state::PaneState;
 use crate::workspace::panel::{ErasedMessage, Panel, PanelKind};
 use crate::workspace::stores::AppStores;
+
+/// Drop preview shown on a workspace window while a tab is dragged from
+/// another OS window.
+#[derive(Debug, Clone)]
+pub struct CrossWindowDropPreview {
+    pub drag: DragState,
+    pub target: DropTarget,
+    pub cursor: Point,
+}
 
 /// Per-window workspace shell state.
 ///
@@ -47,6 +57,8 @@ pub struct Workspace {
     pub drag_state: Option<DragState>,
     /// Latest logical window size for drag bounds and drop-target preview.
     pub window_size: Size,
+    /// Drop-zone preview while another window's tab hovers over this one.
+    pub cross_window_drop_preview: Option<CrossWindowDropPreview>,
     /// Panel waiting to be placed in a new OS window after a tear-off drop.
     torn_off_panel: Option<Box<dyn Panel>>,
 }
@@ -77,6 +89,7 @@ impl Workspace {
             theme_mode,
             drag_state: None,
             window_size: DEFAULT_WINDOW_SIZE,
+            cross_window_drop_preview: None,
             torn_off_panel: None,
         }
     }
@@ -102,6 +115,7 @@ impl Workspace {
             theme_mode,
             drag_state: None,
             window_size: DEFAULT_WINDOW_SIZE,
+            cross_window_drop_preview: None,
             torn_off_panel: None,
         }
     }
@@ -115,6 +129,100 @@ impl Workspace {
     pub fn with_window_size(mut self, size: Size) -> Self {
         self.window_size = size;
         self
+    }
+
+    /// Whether a tab drag is active in this window.
+    pub fn is_tab_drag_active(&self) -> bool {
+        self.drag_state.is_some()
+    }
+
+    /// Resolve a drop target for `cursor` in this window's client coordinates.
+    pub fn resolve_drop_at(&self, cursor: Point, drag: Option<&DragState>) -> DropTarget {
+        let (grid, pane_bounds, (rails, bodies)) = self.drag_geometry();
+        crate::workspace::drag::compute_drop_target(
+            cursor,
+            grid,
+            &pane_bounds,
+            &rails,
+            &bodies,
+            &self.docks,
+            drag,
+        )
+    }
+
+    /// Whether `cursor` lies inside this window's client area.
+    pub fn contains_client_point(&self, cursor: Point) -> bool {
+        iced::Rectangle::new(Point::ORIGIN, self.window_size).contains(cursor)
+    }
+
+    /// Update the active drag's resolved target from app-root routing.
+    pub fn update_drag_target(
+        &mut self,
+        target: DropTarget,
+        cursor: Point,
+        target_window: Option<window::Id>,
+    ) {
+        if let Some(drag) = self.drag_state.as_mut() {
+            drag.pointer_moved = true;
+            drag.cursor = cursor;
+            drag.target = target;
+            drag.target_window = target_window;
+        }
+    }
+
+    pub fn clear_cross_window_drop_preview(&mut self) {
+        self.cross_window_drop_preview = None;
+    }
+
+    pub fn set_cross_window_drop_preview(&mut self, preview: CrossWindowDropPreview) {
+        self.cross_window_drop_preview = Some(preview);
+    }
+
+    /// Remove the dragged tab from this window without placing it.
+    pub fn extract_dragged_panel(&mut self, drag: &DragState) -> Option<Box<dyn Panel>> {
+        let source = drag.source_location;
+        let tab_idx = drag.source_tab;
+        let panel = self.pane_state_mut(source).and_then(|ps| {
+            if tab_idx < ps.tabs.len() {
+                Some(ps.tabs.remove(tab_idx))
+            } else {
+                None
+            }
+        })?;
+        if let Some(ps) = self.pane_state_mut(source)
+            && ps.active >= ps.tabs.len()
+            && !ps.tabs.is_empty()
+        {
+            ps.active = ps.tabs.len() - 1;
+        }
+        Some(panel)
+    }
+
+    /// Place a panel dragged from another window at `target`.
+    pub fn apply_incoming_panel_drop(
+        &mut self,
+        panel: Box<dyn Panel>,
+        target: DropTarget,
+    ) -> Option<Box<dyn Panel>> {
+        self.commit_drop(target, None, panel)
+    }
+
+    pub(crate) fn restore_dragged_panel(
+        &mut self,
+        source: PanelLocation,
+        tab_idx: usize,
+        panel: Box<dyn Panel>,
+    ) {
+        self.restore_tab_at_source(source, tab_idx, panel);
+    }
+
+    pub(crate) fn cleanup_after_drag_source(&mut self, location: PanelLocation) {
+        self.cleanup_empty_source(location);
+    }
+
+    /// Finish a local tab drag, including tear-off to a new window.
+    pub fn finish_local_tab_drag(&mut self, drag: DragState, stores: &mut AppStores) {
+        self.apply_drop(drag, stores);
     }
 
     /// The pane backing a location, if it still exists.
@@ -267,7 +375,7 @@ impl Workspace {
             ps.active = ps.tabs.len() - 1;
         }
 
-        if let Some(panel) = self.commit_drop(drag.target, source, tab_idx, panel) {
+        if let Some(panel) = self.commit_drop(drag.target, Some((source, tab_idx)), panel) {
             self.restore_tab_at_source(source, tab_idx, panel);
             return;
         }
@@ -277,17 +385,19 @@ impl Workspace {
 
     /// Place the dragged panel at the resolved target. Returns `Some(panel)`
     /// when the target cannot be applied so the caller can restore the source tab.
-    fn commit_drop(
+    pub(crate) fn commit_drop(
         &mut self,
         target: DropTarget,
-        source: PanelLocation,
-        tab_idx: usize,
+        source: Option<(PanelLocation, usize)>,
         panel: Box<dyn Panel>,
     ) -> Option<Box<dyn Panel>> {
         match target {
             DropTarget::TabStrip(strip_target) => {
                 let mut insert_at = strip_target.index;
-                if source == strip_target.location && tab_idx < insert_at {
+                if let Some((source, tab_idx)) = source
+                    && source == strip_target.location
+                    && tab_idx < insert_at
+                {
                     insert_at -= 1;
                 }
                 let Some(pane_state) = self.pane_state_mut(strip_target.location) else {
@@ -507,16 +617,12 @@ impl Workspace {
             streams.extend(panel_subscriptions(location, &self.docks.get(side).tabs));
         }
 
-        if self.drag_state.is_some() {
-            streams.push(tab_drag_events());
-        }
-
         Subscription::batch(streams)
     }
 }
 
 /// Track cursor movement and mouse release while a tab drag is active.
-fn tab_drag_events() -> Subscription<WorkspaceMessage> {
+pub(crate) fn tab_drag_subscription() -> Subscription<WorkspaceMessage> {
     event::listen_with(|event, _status, _window| match event {
         Event::Mouse(mouse::Event::CursorMoved { position }) => {
             Some(WorkspaceMessage::CursorMoved(position))
@@ -1164,6 +1270,56 @@ mod tests {
             workspace.panes.get(pane).unwrap().tabs[0].title(),
             "Counter"
         );
+    }
+
+    #[test]
+    fn extract_dragged_panel_removes_source_tab() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+        let drag = workspace.drag_state.as_ref().unwrap().clone();
+        let panel = workspace
+            .extract_dragged_panel(&drag)
+            .expect("panel should be extracted");
+        assert_eq!(panel.title(), "Counter");
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center");
+        };
+        assert_eq!(workspace.panes.get(pane).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn incoming_panel_drop_inserts_into_target_tab_strip() {
+        let mut stores = AppStores::new();
+        let mut target = Workspace::single_pane(
+            PaneState::new(vec![Box::new(TextPanel::new())]),
+            ThemeMode::Dark,
+        );
+        let location = only_center_location(&target);
+        let panel = Box::new(CounterPanel::new(&mut stores)) as Box<dyn Panel>;
+        assert!(
+            target
+                .apply_incoming_panel_drop(
+                    panel,
+                    DropTarget::TabStrip(TabStripTarget { location, index: 1 }),
+                )
+                .is_none()
+        );
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center");
+        };
+        let titles: Vec<_> = target
+            .panes
+            .get(pane)
+            .unwrap()
+            .tabs
+            .iter()
+            .map(|t| t.title())
+            .collect();
+        assert_eq!(titles, vec!["Text", "Counter"]);
     }
 
     #[test]
