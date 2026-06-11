@@ -66,7 +66,7 @@ pub fn view<'a>(workspace: &'a Workspace, stores: &'a AppStores) -> Element<'a, 
         .width(Length::Fill)
         .height(Length::Fill);
 
-    if workspace.drag_state.is_some() {
+    if workspace.drag_state.is_some() || workspace.cross_window_drop_preview.is_some() {
         stack![shell, drop_overlay(workspace, theme)]
             .width(Length::Fill)
             .height(Length::Fill)
@@ -479,34 +479,48 @@ fn drop_overlay<'a>(
     workspace: &'a Workspace,
     theme: OpenZoneTheme,
 ) -> Element<'a, WorkspaceMessage> {
-    let Some(drag) = workspace.drag_state.as_ref() else {
+    let (preview, ghost) = if let Some(preview_state) = workspace.cross_window_drop_preview.as_ref()
+    {
+        let grid = drag::compute_grid_bounds(&workspace.docks, workspace.window_size);
+        let pane_bounds = drag::compute_pane_bounds(&workspace.panes, grid);
+        let (rails, bodies) = drag::compute_dock_regions(&workspace.docks, workspace.window_size);
+        let preview = drag::preview_bounds(
+            preview_state.target,
+            &pane_bounds,
+            &rails,
+            &bodies,
+            &workspace.docks,
+            Some(&preview_state.drag),
+        );
+        (preview, None)
+    } else if let Some(drag) = workspace.drag_state.as_ref() {
+        let grid = drag::compute_grid_bounds(&workspace.docks, workspace.window_size);
+        let pane_bounds = drag::compute_pane_bounds(&workspace.panes, grid);
+        let (rails, bodies) = drag::compute_dock_regions(&workspace.docks, workspace.window_size);
+        let preview = drag::preview_bounds(
+            drag.target,
+            &pane_bounds,
+            &rails,
+            &bodies,
+            &workspace.docks,
+            Some(drag),
+        );
+        let ghost = drag.pointer_moved.then(|| {
+            let title = workspace
+                .tab_title(drag.source_location, drag.source_tab)
+                .unwrap_or_else(|| String::from("Tab"));
+            let tab_w = layout_metrics::estimated_tab_width();
+            let tab_h = layout_metrics::tab_strip_height();
+            GhostTab {
+                position: Point::new(drag.cursor.x - tab_w / 2.0, drag.cursor.y - tab_h / 2.0),
+                size: Size::new(tab_w, tab_h),
+                title,
+            }
+        });
+        (preview, ghost)
+    } else {
         return space::horizontal().width(Length::Shrink).into();
     };
-
-    let grid = drag::compute_grid_bounds(&workspace.docks, workspace.window_size);
-    let pane_bounds = drag::compute_pane_bounds(&workspace.panes, grid);
-    let (rails, bodies) = drag::compute_dock_regions(&workspace.docks, workspace.window_size);
-    let preview = drag::preview_bounds(
-        drag.target,
-        &pane_bounds,
-        &rails,
-        &bodies,
-        &workspace.docks,
-        Some(drag),
-    );
-
-    let ghost = drag.pointer_moved.then(|| {
-        let title = workspace
-            .tab_title(drag.source_location, drag.source_tab)
-            .unwrap_or_else(|| String::from("Tab"));
-        let tab_w = layout_metrics::estimated_tab_width();
-        let tab_h = layout_metrics::tab_strip_height();
-        GhostTab {
-            position: Point::new(drag.cursor.x - tab_w / 2.0, drag.cursor.y - tab_h / 2.0),
-            size: Size::new(tab_w, tab_h),
-            title,
-        }
-    });
 
     let accent = theme.foreground(ForegroundToken::Accent);
     let elevated = theme.background(BackgroundToken::Elevated);
