@@ -141,9 +141,7 @@ impl OpenZone {
         let settings = workspace_window_settings();
         let size = settings.size;
         let (workspace_window, open) = window::open(settings);
-        let workspace = self
-            .restore_or_build_workspace()
-            .with_window_size(size);
+        let workspace = self.restore_or_build_workspace().with_window_size(size);
         self.workspaces.insert(workspace_window, workspace);
 
         let close = match self.onboarding_window.take() {
@@ -165,8 +163,7 @@ impl OpenZone {
         let (workspace_window, open) = window::open(settings);
         self.workspaces.insert(
             workspace_window,
-            build_secondary_workspace(&mut self.stores, self.theme_mode)
-                .with_window_size(size),
+            build_secondary_workspace(&mut self.stores, self.theme_mode).with_window_size(size),
         );
         open.discard()
     }

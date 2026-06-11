@@ -1133,7 +1133,6 @@ mod tests {
         assert_eq!(workspace.focused, location);
     }
 
-
     #[test]
     fn tab_drag_split_failure_restores_panel() {
         let (mut workspace, mut stores) = three_tab_workspace();
@@ -1161,7 +1160,10 @@ mod tests {
             panic!("expected center");
         };
         assert_eq!(workspace.panes.get(pane).unwrap().len(), 2);
-        assert_eq!(workspace.panes.get(pane).unwrap().tabs[0].title(), "Counter");
+        assert_eq!(
+            workspace.panes.get(pane).unwrap().tabs[0].title(),
+            "Counter"
+        );
     }
 
     #[test]
