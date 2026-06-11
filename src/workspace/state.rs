@@ -8,12 +8,17 @@
 //! [`Workspace::update`] (single-writer). The view layer reads this state
 //! by `&self`; only the reducer mutates.
 
-use iced::Subscription;
+use iced::event::{self, Event};
+use iced::mouse;
 use iced::widget::pane_grid::{self, Axis};
+use iced::{Point, Size, Subscription};
 
 use crate::shared::design::{OpenZoneTheme, ThemeMode};
 use crate::workspace::command::{Chord, Command, Keymap};
 use crate::workspace::dock::Docks;
+use crate::workspace::drag::{
+    Direction, DockRegions, DragState, DropTarget, PaneBounds, SplitPaneTarget, TabStripTarget,
+};
 use crate::workspace::location::{DockSide, PanelLocation};
 use crate::workspace::message::WorkspaceMessage;
 use crate::workspace::pane_state::PaneState;
@@ -38,7 +43,20 @@ pub struct Workspace {
     /// Resolved design theme for token lookups in the view.
     pub theme: OpenZoneTheme,
     pub theme_mode: ThemeMode,
+    /// Active tab drag state. `Some` while the user is dragging a tab.
+    pub drag_state: Option<DragState>,
+    /// Latest logical window size for drag bounds and drop-target preview.
+    pub window_size: Size,
+    /// Panel waiting to be placed in a new OS window after a tear-off drop.
+    torn_off_panel: Option<Box<dyn Panel>>,
 }
+
+/// Default workspace window size — matches `workspace_window_settings` in
+/// the composition root and the single-window harness.
+pub const DEFAULT_WINDOW_SIZE: Size = Size {
+    width: 1100.0,
+    height: 760.0,
+};
 
 impl Workspace {
     /// Build a single-pane workspace hosting `tabs`. The lone pane is
@@ -57,6 +75,9 @@ impl Workspace {
             focused: PanelLocation::Center(first),
             theme: OpenZoneTheme::from_mode(theme_mode),
             theme_mode,
+            drag_state: None,
+            window_size: DEFAULT_WINDOW_SIZE,
+            torn_off_panel: None,
         }
     }
 
@@ -79,7 +100,21 @@ impl Workspace {
             focused,
             theme: OpenZoneTheme::from_mode(theme_mode),
             theme_mode,
+            drag_state: None,
+            window_size: DEFAULT_WINDOW_SIZE,
+            torn_off_panel: None,
         }
+    }
+
+    /// Take a panel queued by a tear-off drop, if any.
+    pub fn take_torn_off_panel(&mut self) -> Option<Box<dyn Panel>> {
+        self.torn_off_panel.take()
+    }
+
+    /// Seed logical window size before the first resize event arrives.
+    pub fn with_window_size(mut self, size: Size) -> Self {
+        self.window_size = size;
+        self
     }
 
     /// The pane backing a location, if it still exists.
@@ -105,6 +140,13 @@ impl Workspace {
     /// Whether `location` is the focused location.
     pub fn is_focused(&self, location: PanelLocation) -> bool {
         self.focused == location
+    }
+
+    /// Title of a tab at `location` / `tab`, for drag ghost rendering.
+    pub fn tab_title(&self, location: PanelLocation, tab: usize) -> Option<String> {
+        self.pane_state(location)
+            .and_then(|pane| pane.tabs.get(tab))
+            .map(|panel| panel.title())
     }
 
     /// Fold a workspace message into state. Single mutation path.
@@ -144,8 +186,6 @@ impl Workspace {
             }
             WorkspaceMessage::NewWindow => {}
             WorkspaceMessage::ClockTick => {
-                // Single store-level Clock subscription: one mutation
-                // per tick, every Clock panel reads the same value.
                 stores.clock.tick();
             }
             WorkspaceMessage::PaneDragged(event) => {
@@ -153,6 +193,185 @@ impl Workspace {
                     self.panes.drop(pane, target);
                     self.focused = PanelLocation::Center(pane);
                 }
+            }
+            WorkspaceMessage::TabDragStarted { location, tab } => {
+                self.drag_state = Some(DragState::new(location, tab));
+            }
+            WorkspaceMessage::CursorMoved(cursor) => {
+                if let Some(drag) = self.drag_state.as_ref() {
+                    let (grid, pane_bounds, (rails, bodies)) = self.drag_geometry();
+                    let target = crate::workspace::drag::compute_drop_target(
+                        cursor,
+                        grid,
+                        &pane_bounds,
+                        &rails,
+                        &bodies,
+                        &self.docks,
+                        Some(drag),
+                    );
+                    if let Some(drag) = self.drag_state.as_mut() {
+                        drag.pointer_moved = true;
+                        drag.cursor = cursor;
+                        drag.target = target;
+                    }
+                }
+            }
+            WorkspaceMessage::WindowResized(size) => {
+                self.window_size = size;
+            }
+            WorkspaceMessage::TabDragDropped => {
+                if let Some(drag) = self.drag_state.take() {
+                    self.apply_drop(drag, stores);
+                }
+            }
+        }
+    }
+
+    /// Pane and dock rectangles used for drag hit-testing and preview.
+    fn drag_geometry(&self) -> (iced::Rectangle, Vec<PaneBounds>, DockRegions) {
+        let grid = crate::workspace::drag::compute_grid_bounds(&self.docks, self.window_size);
+        let pane_bounds = crate::workspace::drag::compute_pane_bounds(&self.panes, grid);
+        let dock_regions =
+            crate::workspace::drag::compute_dock_regions(&self.docks, self.window_size);
+        (grid, pane_bounds, dock_regions)
+    }
+
+    /// Apply a completed tab drag operation.
+    fn apply_drop(&mut self, drag: DragState, _stores: &mut AppStores) {
+        if matches!(drag.target, DropTarget::None) && !drag.pointer_moved {
+            self.focused = drag.source_location;
+            if let Some(pane_state) = self.pane_state_mut(drag.source_location) {
+                pane_state.select(drag.source_tab);
+            }
+            return;
+        }
+
+        let source = drag.source_location;
+        let tab_idx = drag.source_tab;
+        let panel = self.pane_state_mut(source).and_then(|ps| {
+            if tab_idx < ps.tabs.len() {
+                Some(ps.tabs.remove(tab_idx))
+            } else {
+                None
+            }
+        });
+
+        let Some(panel) = panel else {
+            return;
+        };
+
+        if let Some(ps) = self.pane_state_mut(source)
+            && ps.active >= ps.tabs.len()
+            && !ps.tabs.is_empty()
+        {
+            ps.active = ps.tabs.len() - 1;
+        }
+
+        if let Some(panel) = self.commit_drop(drag.target, source, tab_idx, panel) {
+            self.restore_tab_at_source(source, tab_idx, panel);
+            return;
+        }
+
+        self.cleanup_empty_source(source);
+    }
+
+    /// Place the dragged panel at the resolved target. Returns `Some(panel)`
+    /// when the target cannot be applied so the caller can restore the source tab.
+    fn commit_drop(
+        &mut self,
+        target: DropTarget,
+        source: PanelLocation,
+        tab_idx: usize,
+        panel: Box<dyn Panel>,
+    ) -> Option<Box<dyn Panel>> {
+        match target {
+            DropTarget::TabStrip(strip_target) => {
+                let mut insert_at = strip_target.index;
+                if source == strip_target.location && tab_idx < insert_at {
+                    insert_at -= 1;
+                }
+                let Some(pane_state) = self.pane_state_mut(strip_target.location) else {
+                    return Some(panel);
+                };
+                let insert_at = insert_at.min(pane_state.tabs.len());
+                pane_state.tabs.insert(insert_at, panel);
+                pane_state.active = insert_at;
+                self.focused = strip_target.location;
+                None
+            }
+            DropTarget::SplitPane(split_target) => {
+                let axis = match split_target.direction {
+                    Direction::Left | Direction::Right => Axis::Vertical,
+                    Direction::Up | Direction::Down => Axis::Horizontal,
+                };
+                let mut new_pane_state = PaneState::new(vec![panel]);
+                let Some((new_pane, _)) =
+                    self.panes
+                        .split(axis, split_target.pane, PaneState::empty())
+                else {
+                    return Some(new_pane_state.tabs.remove(0));
+                };
+                if let Some(pane_state) = self.panes.get_mut(new_pane) {
+                    *pane_state = new_pane_state;
+                }
+                if matches!(split_target.direction, Direction::Left | Direction::Up) {
+                    self.panes.swap(new_pane, split_target.pane);
+                }
+                let focused_pane = match split_target.direction {
+                    Direction::Left | Direction::Up => split_target.pane,
+                    Direction::Right | Direction::Down => new_pane,
+                };
+                self.focused = PanelLocation::Center(focused_pane);
+                None
+            }
+            DropTarget::Dock(side) => {
+                let dock = self.docks.get_mut(side);
+                dock.tabs.tabs.push(panel);
+                dock.tabs.active = dock.tabs.tabs.len() - 1;
+                dock.open = true;
+                self.focused = PanelLocation::Dock(side);
+                None
+            }
+            DropTarget::None => {
+                self.torn_off_panel = Some(panel);
+                None
+            }
+        }
+    }
+
+    fn restore_tab_at_source(
+        &mut self,
+        source: PanelLocation,
+        tab_idx: usize,
+        panel: Box<dyn Panel>,
+    ) {
+        if let Some(pane_state) = self.pane_state_mut(source) {
+            let restore_at = tab_idx.min(pane_state.tabs.len());
+            pane_state.tabs.insert(restore_at, panel);
+            pane_state.active = restore_at;
+        }
+    }
+
+    /// Remove an empty center pane or collapse an empty dock after a
+    /// tab was dragged away.
+    fn cleanup_empty_source(&mut self, location: PanelLocation) {
+        let is_empty = self
+            .pane_state(location)
+            .map(|ps| ps.is_empty())
+            .unwrap_or(false);
+
+        if !is_empty {
+            return;
+        }
+
+        match location {
+            PanelLocation::Center(pane) => {
+                if let Some((_, sibling)) = self.panes.close(pane) {
+                    self.focused = PanelLocation::Center(sibling);
+                }
+            }
+            PanelLocation::Dock(side) => {
+                self.docks.get_mut(side).open = false;
             }
         }
     }
@@ -288,8 +507,25 @@ impl Workspace {
             streams.extend(panel_subscriptions(location, &self.docks.get(side).tabs));
         }
 
+        if self.drag_state.is_some() {
+            streams.push(tab_drag_events());
+        }
+
         Subscription::batch(streams)
     }
+}
+
+/// Track cursor movement and mouse release while a tab drag is active.
+fn tab_drag_events() -> Subscription<WorkspaceMessage> {
+    event::listen_with(|event, _status, _window| match event {
+        Event::Mouse(mouse::Event::CursorMoved { position }) => {
+            Some(WorkspaceMessage::CursorMoved(position))
+        }
+        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+            Some(WorkspaceMessage::TabDragDropped)
+        }
+        _ => None,
+    })
 }
 
 /// Whether a pane stack contains at least one Clock panel.
@@ -330,8 +566,6 @@ mod tests {
     use crate::workspace::stores::CounterId;
 
     /// Build a two-tab workspace plus the app-root stores it views over.
-    /// Returning the stores alongside lets each test run the reducer with
-    /// the same `&mut AppStores` borrow the live app uses.
     fn three_tab_workspace() -> (Workspace, AppStores) {
         let mut stores = AppStores::new();
         let tabs: Vec<Box<dyn Panel>> = vec![
@@ -423,10 +657,6 @@ mod tests {
         assert_eq!(workspace.focused, PanelLocation::Center(pane));
     }
 
-    /// Store mutation boundary, per the issue's acceptance test:
-    /// one Counter intent routed through workspace `update` lifts into
-    /// exactly one [`CounterStore`] mutation that every observing
-    /// Counter panel in the layout reflects.
     #[test]
     fn counter_intent_lifts_to_a_single_store_mutation() {
         let (mut workspace, mut stores) = three_tab_workspace();
@@ -441,7 +671,6 @@ mod tests {
             &mut stores,
         );
 
-        // Exactly one slot, exactly one increment, end-state count == 1.
         assert_eq!(stores.counter.len(), 1);
         let snapshot = workspace.panes.iter().next().unwrap().1.tabs[0].snapshot(&stores);
         assert_eq!(snapshot.get("count").and_then(|v| v.as_i64()), Some(1));
@@ -551,13 +780,10 @@ mod tests {
         );
     }
 
-    /// Closing a Counter panel must release its [`CounterStore`] slot.
-    /// Without this the store would leak ids across panel lifecycles.
     #[test]
     fn closing_counter_tab_releases_store_slot() {
         let (mut workspace, mut stores) = three_tab_workspace();
         let location = only_center_location(&workspace);
-        // Select tab 0 (the Counter) and close it.
         workspace.update(
             WorkspaceMessage::TabSelected { location, tab: 0 },
             &mut stores,
@@ -648,10 +874,6 @@ mod tests {
         assert_eq!(workspace.panes.get(pane).unwrap().len(), 1);
     }
 
-    /// Single store-level Clock subscription:
-    /// one [`WorkspaceMessage::ClockTick`] folds into exactly one
-    /// [`ClockStore::tick`], and every Clock panel in the layout
-    /// re-renders against the same value.
     #[test]
     fn clock_tick_updates_store_once_for_all_observers() {
         let mut stores = AppStores::new();
@@ -669,14 +891,8 @@ mod tests {
         workspace.update(WorkspaceMessage::ClockTick, &mut stores);
         workspace.update(WorkspaceMessage::ClockTick, &mut stores);
 
-        // One store mutation per tick — the store's tick count is the
-        // number of WorkspaceMessage::ClockTick the reducer saw.
         assert_eq!(stores.clock.ticks(), 2);
 
-        // All three observing Clock panels read the same value: this
-        // is what "removing a Clock tab does not leave orphan
-        // subscriptions" depends on, since there is exactly one
-        // subscription source for the whole fan-out.
         let center_pane = workspace.panes.iter().next().unwrap().1;
         let center_a = center_pane.tabs[0].snapshot(&stores);
         let center_b = center_pane.tabs[1].snapshot(&stores);
@@ -685,6 +901,7 @@ mod tests {
         assert_eq!(center_a, dock_a);
         assert_eq!(center_a.get("ticks").and_then(|v| v.as_u64()), Some(2));
     }
+
     fn workspace_with_shared_counter(counter_id: CounterId) -> Workspace {
         let center = PaneState::new(vec![
             Box::new(CounterPanel::with_id(counter_id)) as Box<dyn Panel>,
@@ -693,9 +910,6 @@ mod tests {
         Workspace::single_pane(center, ThemeMode::Dark)
     }
 
-    /// Multi-window store fan-out: one Counter intent mutates the shared
-    /// app-root store once and every workspace observing that id reflects
-    /// the new value.
     #[test]
     fn two_workspaces_observe_same_counter_after_single_mutation() {
         let mut stores = AppStores::new();
@@ -720,8 +934,6 @@ mod tests {
         assert_eq!(snapshot_a.get("count").and_then(|v| v.as_i64()), Some(1));
     }
 
-    /// App-root clock fan-out: one store tick is visible from Clock panels
-    /// in two independent workspace layouts.
     #[test]
     fn clock_store_tick_reaches_two_workspaces() {
         let mut stores = AppStores::new();
@@ -740,5 +952,237 @@ mod tests {
 
         assert_eq!(clock_a, clock_b);
         assert_eq!(clock_a.get("ticks").and_then(|v| v.as_u64()), Some(3));
+    }
+
+    // ─── Tab drag-and-drop reducer tests ───
+
+    #[test]
+    fn tab_drag_started_sets_drag_state() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+
+        assert!(workspace.drag_state.is_some());
+        let drag = workspace.drag_state.as_ref().unwrap();
+        assert_eq!(drag.source_location, location);
+        assert_eq!(drag.source_tab, 0);
+    }
+
+    #[test]
+    fn cursor_moved_updates_drop_target() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+
+        // Cursor in the center of the pane body (below tab strip)
+        workspace.update(
+            WorkspaceMessage::CursorMoved(iced::Point::new(400.0, 350.0)),
+            &mut stores,
+        );
+
+        let drag = workspace.drag_state.as_ref().unwrap();
+        assert!(matches!(drag.target, DropTarget::TabStrip(_)));
+    }
+
+    #[test]
+    fn tab_drag_dropped_moves_tab_to_dock() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+
+        workspace.drag_state.as_mut().unwrap().target = DropTarget::Dock(DockSide::Right);
+
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        assert!(workspace.drag_state.is_none());
+        assert!(workspace.docks.right.open);
+        assert_eq!(workspace.docks.right.tabs.len(), 1);
+        assert_eq!(workspace.docks.right.tabs.tabs[0].title(), "Counter");
+
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center");
+        };
+        assert_eq!(workspace.panes.get(pane).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn tab_drag_dropped_splits_pane() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 1 },
+            &mut stores,
+        );
+
+        let pane = match location {
+            PanelLocation::Center(p) => p,
+            _ => panic!(),
+        };
+
+        workspace.drag_state.as_mut().unwrap().target = DropTarget::SplitPane(SplitPaneTarget {
+            pane,
+            direction: Direction::Right,
+        });
+
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        assert!(workspace.drag_state.is_none());
+        assert_eq!(workspace.panes.len(), 2);
+        assert!(matches!(workspace.focused, PanelLocation::Center(_)));
+    }
+
+    #[test]
+    fn tab_drag_dropped_none_queues_torn_off_panel() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+
+        {
+            let drag = workspace.drag_state.as_mut().unwrap();
+            drag.target = DropTarget::None;
+            drag.pointer_moved = true;
+        }
+
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        assert!(workspace.drag_state.is_none());
+        let torn = workspace
+            .take_torn_off_panel()
+            .expect("tear-off should queue the panel");
+        assert_eq!(torn.title(), "Counter");
+
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center");
+        };
+        assert_eq!(workspace.panes.get(pane).unwrap().len(), 1);
+        assert_eq!(workspace.panes.get(pane).unwrap().tabs[0].title(), "Text");
+    }
+
+    #[test]
+    fn tab_drag_reorder_within_same_pane_adjusts_insert_index() {
+        let mut stores = AppStores::new();
+        let tabs: Vec<Box<dyn Panel>> = vec![
+            Box::new(CounterPanel::new(&mut stores)),
+            Box::new(TextPanel::new()),
+            Box::new(ClockPanel::new()),
+        ];
+        let mut workspace = Workspace::single_pane(PaneState::new(tabs), ThemeMode::Dark);
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+
+        {
+            let drag = workspace.drag_state.as_mut().unwrap();
+            drag.target = DropTarget::TabStrip(TabStripTarget { location, index: 2 });
+            drag.pointer_moved = true;
+        }
+
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center");
+        };
+        let titles: Vec<_> = workspace
+            .panes
+            .get(pane)
+            .unwrap()
+            .tabs
+            .iter()
+            .map(|t| t.title())
+            .collect();
+        assert_eq!(titles, vec!["Text", "Counter", "Clock"]);
+    }
+
+    #[test]
+    fn tab_drag_dropped_without_movement_selects_tab() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 1 },
+            &mut stores,
+        );
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        assert!(workspace.drag_state.is_none());
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center");
+        };
+        assert_eq!(workspace.panes.get(pane).unwrap().len(), 2);
+        assert_eq!(workspace.panes.get(pane).unwrap().active, 1);
+        assert_eq!(workspace.focused, location);
+    }
+
+    #[test]
+    fn tab_drag_split_failure_restores_panel() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+
+        workspace.apply_command(Command::SplitFocused, &mut stores);
+        let panes: Vec<pane_grid::Pane> = workspace.panes.iter().map(|(p, _)| *p).collect();
+        let stale_pane = panes[1];
+        workspace.panes.close(stale_pane);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+
+        workspace.drag_state.as_mut().unwrap().target = DropTarget::SplitPane(SplitPaneTarget {
+            pane: stale_pane,
+            direction: Direction::Right,
+        });
+        workspace.drag_state.as_mut().unwrap().pointer_moved = true;
+
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center");
+        };
+        assert_eq!(workspace.panes.get(pane).unwrap().len(), 2);
+        assert_eq!(
+            workspace.panes.get(pane).unwrap().tabs[0].title(),
+            "Counter"
+        );
+    }
+
+    #[test]
+    fn native_pane_grid_drag_still_works() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        workspace.apply_command(Command::SplitFocused, &mut stores);
+        assert_eq!(workspace.panes.len(), 2);
+
+        let panes: Vec<pane_grid::Pane> = workspace.panes.iter().map(|(p, _)| *p).collect();
+
+        workspace.update(
+            WorkspaceMessage::PaneDragged(pane_grid::DragEvent::Dropped {
+                pane: panes[0],
+                target: pane_grid::Target::Pane(panes[1], pane_grid::Region::Center),
+            }),
+            &mut stores,
+        );
+
+        assert_eq!(workspace.panes.len(), 2);
+        assert_eq!(workspace.focused, PanelLocation::Center(panes[0]));
     }
 }

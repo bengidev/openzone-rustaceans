@@ -18,6 +18,8 @@
 
 pub mod command;
 pub mod dock;
+pub mod drag;
+pub mod layout_metrics;
 pub mod layout_store;
 pub mod location;
 pub mod message;
@@ -31,6 +33,8 @@ pub mod view;
 
 pub use command::{Chord, Command, KeyRef, Keymap, Mods, chord_from_keyboard_event};
 pub use dock::{Dock, Docks};
+pub use drag::{Direction, DragState, DropTarget, SplitPaneTarget, TabStripTarget};
+use iced::{Subscription, Task, Theme, window};
 pub use layout_store::{FileLayoutStore, LayoutStore, LayoutStoreError};
 pub use location::{DockSide, PanelLocation};
 pub use message::WorkspaceMessage;
@@ -40,8 +44,6 @@ pub use persistence::{LayoutSnapshot, capture, restore};
 pub use registry::{PanelConstructor, PanelRegistry};
 pub use state::Workspace;
 pub use stores::{AppStores, ClockStore, CounterId, CounterStore};
-
-use iced::{Subscription, Task, Theme};
 
 use crate::shared::design::ThemeMode;
 
@@ -112,6 +114,7 @@ impl WorkspaceApp {
             self.workspace.subscription(),
             iced::keyboard::listen()
                 .filter_map(|event| chord_from_keyboard_event(&event).map(WorkspaceMessage::Key)),
+            window::resize_events().map(|(_, size)| WorkspaceMessage::WindowResized(size)),
         ];
         if self.workspace.has_clock_panel() {
             streams.push(

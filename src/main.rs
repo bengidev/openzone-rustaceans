@@ -99,6 +99,9 @@ impl OpenZone {
                 }
                 if let Some(workspace) = self.workspaces.get_mut(&window) {
                     workspace.update(message, &mut self.stores);
+                    if let Some(panel) = workspace.take_torn_off_panel() {
+                        return self.open_workspace_with_panel(panel);
+                    }
                 }
                 Task::none()
             }
@@ -135,8 +138,10 @@ impl OpenZone {
 
     /// Open the first workspace window and close onboarding.
     fn enter_workspace(&mut self) -> Task<Message> {
-        let (workspace_window, open) = window::open(workspace_window_settings());
-        let workspace = self.restore_or_build_workspace();
+        let settings = workspace_window_settings();
+        let size = settings.size;
+        let (workspace_window, open) = window::open(settings);
+        let workspace = self.restore_or_build_workspace().with_window_size(size);
         self.workspaces.insert(workspace_window, workspace);
 
         let close = match self.onboarding_window.take() {
@@ -153,10 +158,25 @@ impl OpenZone {
     /// Open another workspace window with an independent layout that
     /// still observes the same app-root Counter and Clock stores.
     fn open_additional_workspace(&mut self) -> Task<Message> {
-        let (workspace_window, open) = window::open(workspace_window_settings());
+        let settings = workspace_window_settings();
+        let size = settings.size;
+        let (workspace_window, open) = window::open(settings);
         self.workspaces.insert(
             workspace_window,
-            build_secondary_workspace(&mut self.stores, self.theme_mode),
+            build_secondary_workspace(&mut self.stores, self.theme_mode).with_window_size(size),
+        );
+        open.discard()
+    }
+
+    /// Open a workspace window hosting a single tab torn off from another.
+    fn open_workspace_with_panel(&mut self, panel: Box<dyn Panel>) -> Task<Message> {
+        let settings = workspace_window_settings();
+        let size = settings.size;
+        let (workspace_window, open) = window::open(settings);
+        self.workspaces.insert(
+            workspace_window,
+            Workspace::single_pane(PaneState::new(vec![panel]), self.theme_mode)
+                .with_window_size(size),
         );
         open.discard()
     }
@@ -219,13 +239,23 @@ impl OpenZone {
             streams.push(onboarding.subscription().map(Message::Onboarding));
         }
 
-        for (window_id, workspace) in &self.workspaces {
+        let workspace_window_ids: Vec<window::Id> = self.workspaces.keys().copied().collect();
+        for window_id in workspace_window_ids {
+            let workspace = &self.workspaces[&window_id];
             streams.push(
                 workspace
                     .subscription()
-                    .with(*window_id)
+                    .with(window_id)
                     .map(|(window, message)| Message::Workspace { window, message }),
             );
+            streams.push(window::resize_events().with(window_id).filter_map(
+                |(target_window, (id, size))| {
+                    (id == target_window).then(|| Message::Workspace {
+                        window: target_window,
+                        message: WorkspaceMessage::WindowResized(size),
+                    })
+                },
+            ));
         }
 
         if !self.workspaces.is_empty() {
