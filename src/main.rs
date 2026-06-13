@@ -33,8 +33,6 @@ use crate::features::onboarding::{
 };
 use crate::shared::design::ThemeMode;
 use crate::workspace::state::tab_drag_subscription;
-#[cfg(test)]
-use crate::workspace::stores::CounterId;
 use crate::workspace::{
     AppStores, Chord, CrossWindowDropPreview, DragState, DropTarget, FileLayoutStore, LayoutStore,
     Mods, PaneState, Panel, PanelKind, PanelRegistry, Workspace, WorkspaceMessage,
@@ -129,11 +127,6 @@ impl OpenZone {
                 Task::none()
             }
             Message::OpenWorkspace => self.open_additional_workspace(),
-            #[cfg(test)]
-            Message::ClockTick => {
-                self.stores.clock.tick();
-                Task::none()
-            }
             Message::WindowClosed(id) => self.handle_window_closed(id),
         }
     }
@@ -437,13 +430,6 @@ impl OpenZone {
         Subscription::batch(streams)
     }
 
-    #[cfg(test)]
-    fn any_workspace_has_clock(&self) -> bool {
-        self.workspaces
-            .values()
-            .any(|workspace| workspace.has_clock_panel())
-    }
-
     fn title(&self, _window: window::Id) -> String {
         String::from("OpenZone")
     }
@@ -481,9 +467,6 @@ enum Message {
     },
     /// Open another workspace window (title bar or `Cmd+Shift+N`).
     OpenWorkspace,
-    /// One tick from the single app-level Clock subscription.
-    #[cfg(test)]
-    ClockTick,
     WindowClosed(window::Id),
 }
 

@@ -15,21 +15,25 @@
 //! lets the reducer split-borrow them alongside per-window workspace
 //! state without entangling the two.
 
+#[cfg(test)]
 use std::collections::HashMap;
 
 /// Stable handle assigned to each [`crate::features::dummies::CounterPanel`].
 ///
 /// Multiple Counter panels may exist; each owns an independent count
 /// keyed by this id. Ids are monotonically allocated and never reused.
+#[cfg(test)]
 pub type CounterId = u64;
 
 /// The app-root counter store: one count per allocated [`CounterId`].
+#[cfg(test)]
 #[derive(Debug, Default, Clone)]
 pub struct CounterStore {
     next_id: u64,
     counts: HashMap<CounterId, i64>,
 }
 
+#[cfg(test)]
 impl CounterStore {
     /// Build an empty store.
     pub fn new() -> Self {
@@ -97,11 +101,13 @@ impl CounterStore {
 /// In the multi-window daemon, the app-root subscription drives `tick`
 /// once per second; the single-window [`crate::workspace::run`] path
 /// owns the equivalent subscription on [`crate::workspace::WorkspaceApp`].
+#[cfg(test)]
 #[derive(Debug, Default, Clone)]
 pub struct ClockStore {
     ticks: u64,
 }
 
+#[cfg(test)]
 impl ClockStore {
     /// Build a store at zero ticks.
     pub fn new() -> Self {

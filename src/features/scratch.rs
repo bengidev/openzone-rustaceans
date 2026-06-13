@@ -62,7 +62,7 @@ impl Panel for ScratchPanel {
         );
     }
 
-    fn snapshot(&self, _stores: &AppStores) -> serde_json::Value {
-        serde_json::json!({})
+    fn snapshot(&self, _stores: &AppStores) -> Option<serde_json::Value> {
+        None
     }
 }

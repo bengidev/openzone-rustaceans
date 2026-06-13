@@ -176,16 +176,40 @@ fn collect_leaves(node: &Node, out: &mut Vec<pane_grid::Pane>) {
 }
 
 fn capture_pane(pane_state: &PaneState, stores: &AppStores) -> PaneSnapshot {
-    PaneSnapshot {
-        tabs: pane_state
-            .tabs
-            .iter()
-            .map(|panel| PanelHandle {
+    let mut tabs = Vec::with_capacity(pane_state.tabs.len());
+    // Track the surviving index of the originally-focused tab: count
+    // how many durable tabs preceded `pane_state.active`. When the
+    // focused tab itself was non-durable, the clamp falls back to the
+    // last surviving panel before it (saturating sub 1), so active
+    // never dangles.
+    let mut new_active: usize = 0;
+    for (i, panel) in pane_state.tabs.iter().enumerate() {
+        if let Some(snapshot) = panel.snapshot(stores) {
+            if i < pane_state.active {
+                new_active += 1;
+            } else if i == pane_state.active {
+                // Focused tab survived: new_active already counts the
+                // preceding survivors, which is exactly its new index.
+            }
+            tabs.push(PanelHandle {
                 kind: panel.kind(),
-                snapshot: panel.snapshot(stores),
-            })
-            .collect(),
-        active: pane_state.active,
+                snapshot,
+            });
+        } else if i == pane_state.active {
+            // Focused tab is non-durable; fall back to the last
+            // surviving tab before it (or 0 if none survived).
+            new_active = new_active.saturating_sub(1);
+        }
+    }
+    // If every tab was non-durable, collapse active to 0.
+    if tabs.is_empty() {
+        new_active = 0;
+    } else {
+        new_active = new_active.min(tabs.len() - 1);
+    }
+    PaneSnapshot {
+        tabs,
+        active: new_active,
     }
 }
 
@@ -282,6 +306,7 @@ fn restore_dock(snapshot: &DockSnapshot, registry: &PanelRegistry, stores: &mut 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::ScratchPanel;
     use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
     use crate::workspace::command::Command;
     use crate::workspace::location::DockSide;
@@ -328,7 +353,7 @@ mod tests {
         stores.counter.increment(counter.id());
         let handle = PanelHandle {
             kind: counter.kind(),
-            snapshot: counter.snapshot(&stores),
+            snapshot: counter.snapshot(&stores).expect("durable"),
         };
 
         let mut rebuild_stores = AppStores::new();
@@ -336,7 +361,7 @@ mod tests {
             .build(handle.kind, handle.snapshot.clone(), &mut rebuild_stores)
             .expect("counter kind is registered");
         assert_eq!(rebuilt.kind(), PanelKind::Counter);
-        assert_eq!(rebuilt.snapshot(&rebuild_stores), handle.snapshot);
+        assert_eq!(rebuilt.snapshot(&rebuild_stores), Some(handle.snapshot));
     }
 
     #[test]
@@ -382,15 +407,13 @@ mod tests {
         // Mutate via store directly: the panel is a view, so mutating the
         // store has the same effect as routing three intents.
         let counter_id = {
-            let pane_state = workspace.panes.iter().next().unwrap().1;
+            let _pane_state = workspace.panes.iter().next().unwrap().1;
             // The Counter is at index 0 of the center pane; recover its
             // id from the live store by reading what its snapshot
             // currently addresses.
-            let snapshot = pane_state.tabs[0].snapshot(&stores);
             // The CounterPanel test exposed `id()`, but here we don't
             // have the concrete type. Instead, drive every live counter:
             // there's only one counter in the center tab.
-            let _ = snapshot;
             0u64
         };
         let _ = counter_id;
@@ -415,6 +438,7 @@ mod tests {
         };
         let count = restored.panes.get(pane).unwrap().tabs[0]
             .snapshot(&restored_stores)
+            .expect("durable")
             .get("count")
             .and_then(|v| v.as_i64())
             .unwrap();
@@ -451,5 +475,24 @@ mod tests {
         let mut stores = AppStores::new();
         let pane = restore_pane(&snapshot, &test_registry(), &mut stores);
         assert_eq!(pane.active, 0);
+    }
+
+    #[test]
+    fn scratch_filtered_active_clamped_to_surviving_durable() {
+        let stores = AppStores::new();
+        // [Scratch, Durable1, Durable2], active=1 (Durable1 focused)
+        let panes = pane_grid::State::new(PaneState::new(vec![
+            Box::new(ScratchPanel::new()),
+            Box::new(TextPanel::new()),
+            Box::new(TextPanel::new()),
+        ]));
+        let mut panes = panes.0;
+        let (_pane, pane_state) = panes.iter_mut().next().unwrap();
+        pane_state.active = 1;
+        let snap = capture_pane(pane_state, &stores);
+        // Scratch dropped; active=1 should map to surviving index 0
+        assert_eq!(snap.tabs.len(), 2);
+        assert_eq!(snap.active, 0);
+        assert_eq!(snap.tabs[0].kind, PanelKind::Text);
     }
 }

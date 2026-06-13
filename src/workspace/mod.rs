@@ -43,7 +43,9 @@ pub use panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
 pub use persistence::{LayoutSnapshot, capture, restore};
 pub use registry::{PanelConstructor, PanelRegistry};
 pub use state::{CrossWindowDropPreview, Workspace};
-pub use stores::{AppStores, ClockStore, CounterId, CounterStore};
+pub use stores::AppStores;
+#[cfg(test)]
+pub use stores::{ClockStore, CounterId, CounterStore};
 
 use crate::shared::design::ThemeMode;
 

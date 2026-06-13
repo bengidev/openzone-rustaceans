@@ -319,17 +319,15 @@ impl Workspace {
             } => {
                 self.route_to_panel(location, tab, message, stores);
             }
-            WorkspaceMessage::Key(chord) => self.handle_key(chord, stores),
+            WorkspaceMessage::Key(k) => {
+                self.handle_key(k, stores);
+            }
             WorkspaceMessage::Command(command) => self.apply_command(command, stores),
             WorkspaceMessage::ToggleTheme => {
                 self.theme_mode = self.theme_mode.toggle();
                 self.theme = OpenZoneTheme::from_mode(self.theme_mode);
             }
             WorkspaceMessage::NewWindow => {}
-            #[cfg(test)]
-            WorkspaceMessage::ClockTick => {
-                stores.clock.tick();
-            }
             WorkspaceMessage::PaneDragged(event) => {
                 if let pane_grid::DragEvent::Dropped { pane, target } = event {
                     self.panes.drop(pane, target);
@@ -655,28 +653,8 @@ impl Workspace {
 
         Subscription::batch(streams)
     }
-    /// Check if any pane in the workspace contains a clock panel.
-    #[cfg(test)]
-    pub fn has_clock_panel(&self) -> bool {
-        for (_, pane_state) in self.panes.iter() {
-            if pane_has_clock(pane_state) {
-                return true;
-            }
-        }
-        if pane_has_clock(&self.docks.left.tabs) {
-            return true;
-        }
-        if pane_has_clock(&self.docks.right.tabs) {
-            return true;
-        }
-        if pane_has_clock(&self.docks.bottom.tabs) {
-            return true;
-        }
-        false
-    }
 }
 
-/// Track cursor movement and mouse release while a tab drag is active.
 pub(crate) fn tab_drag_subscription() -> Subscription<WorkspaceMessage> {
     event::listen_with(|event, _status, _window| match event {
         Event::Mouse(mouse::Event::CursorMoved { position }) => {
@@ -689,13 +667,6 @@ pub(crate) fn tab_drag_subscription() -> Subscription<WorkspaceMessage> {
     })
 }
 
-#[cfg(test)]
-fn pane_has_clock(pane_state: &PaneState) -> bool {
-    pane_state
-        .tabs
-        .iter()
-        .any(|panel| panel.kind() == PanelKind::Clock)
-}
 fn panel_subscriptions(
     location: PanelLocation,
     pane_state: &PaneState,
@@ -832,7 +803,9 @@ mod tests {
         );
 
         assert_eq!(stores.counter.len(), 1);
-        let snapshot = workspace.panes.iter().next().unwrap().1.tabs[0].snapshot(&stores);
+        let snapshot = workspace.panes.iter().next().unwrap().1.tabs[0]
+            .snapshot(&stores)
+            .expect("durable");
         assert_eq!(snapshot.get("count").and_then(|v| v.as_i64()), Some(1));
     }
 
@@ -1048,15 +1021,17 @@ mod tests {
         );
         let mut workspace = Workspace::with_docks(center, docks, ThemeMode::Dark);
 
-        workspace.update(WorkspaceMessage::ClockTick, &mut stores);
-        workspace.update(WorkspaceMessage::ClockTick, &mut stores);
+        stores.clock.tick();
+        stores.clock.tick();
 
         assert_eq!(stores.clock.ticks(), 2);
 
         let center_pane = workspace.panes.iter().next().unwrap().1;
-        let center_a = center_pane.tabs[0].snapshot(&stores);
-        let center_b = center_pane.tabs[1].snapshot(&stores);
-        let dock_a = workspace.docks.right.tabs.tabs[0].snapshot(&stores);
+        let center_a = center_pane.tabs[0].snapshot(&stores).expect("durable");
+        let center_b = center_pane.tabs[1].snapshot(&stores).expect("durable");
+        let dock_a = workspace.docks.right.tabs.tabs[0]
+            .snapshot(&stores)
+            .expect("durable");
         assert_eq!(center_a, center_b);
         assert_eq!(center_a, dock_a);
         assert_eq!(center_a.get("ticks").and_then(|v| v.as_u64()), Some(2));
@@ -1087,8 +1062,12 @@ mod tests {
             &mut stores,
         );
 
-        let snapshot_a = workspace_a.panes.iter().next().unwrap().1.tabs[0].snapshot(&stores);
-        let snapshot_b = workspace_b.panes.iter().next().unwrap().1.tabs[0].snapshot(&stores);
+        let snapshot_a = workspace_a.panes.iter().next().unwrap().1.tabs[0]
+            .snapshot(&stores)
+            .expect("durable");
+        let snapshot_b = workspace_b.panes.iter().next().unwrap().1.tabs[0]
+            .snapshot(&stores)
+            .expect("durable");
 
         assert_eq!(snapshot_a, snapshot_b);
         assert_eq!(snapshot_a.get("count").and_then(|v| v.as_i64()), Some(1));
@@ -1107,8 +1086,12 @@ mod tests {
         stores.clock.tick();
         stores.clock.tick();
 
-        let clock_a = workspace_a.panes.iter().next().unwrap().1.tabs[1].snapshot(&stores);
-        let clock_b = workspace_b.panes.iter().next().unwrap().1.tabs[0].snapshot(&stores);
+        let clock_a = workspace_a.panes.iter().next().unwrap().1.tabs[1]
+            .snapshot(&stores)
+            .expect("durable");
+        let clock_b = workspace_b.panes.iter().next().unwrap().1.tabs[0]
+            .snapshot(&stores)
+            .expect("durable");
 
         assert_eq!(clock_a, clock_b);
         assert_eq!(clock_a.get("ticks").and_then(|v| v.as_u64()), Some(3));
