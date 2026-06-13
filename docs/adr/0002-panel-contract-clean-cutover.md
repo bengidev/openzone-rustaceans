@@ -49,8 +49,7 @@ they are never shipped as part of the production shell.
 
 Dummy panels are removed end-to-end: types, constructors, registry entries,
 startup layout references, persistence fixtures, and any documentation that
-treats them as real surfaces. No deprecated aliases or compatibility shims are
-left behind.
+treats them as real surfaces.
 
 ### Optional panel snapshots
 
@@ -149,5 +148,4 @@ live panels provide.
 - Tests that previously depended on production dummy panels are re-implemented
   using test-only panels under `#[cfg(test)]`; these tests preserve the same
   reducer, persistence, and geometry seams.
-- There are no deprecated aliases, aliases under a different name, or
-  compatibility shims for the deleted dummy panels.
+- No legacy dummy-panel migration path is retained.

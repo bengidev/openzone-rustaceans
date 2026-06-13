@@ -16,7 +16,7 @@ src/
 ├── main.rs                          # composition root
 ├── features/
 │   ├── mod.rs
-│   ├── dummies/                     # test/development dummy panels (removed in production builds)
+│   ├── dummies/                     # current temporary dummy panels pending cutover
 │   ├── onboarding/
 │   │   ├── mod.rs                   # feature facade
 │   │   ├── onboarding_state.rs      # reducer, messages, dynamics
