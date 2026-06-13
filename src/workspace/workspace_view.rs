@@ -469,14 +469,10 @@ fn dock_control_button<'a>(
     dock: &Dock,
     label: &'static str,
 ) -> Element<'a, WorkspaceMessage> {
+    use crate::workspace::workspace_command::Command;
+
     let is_empty = dock.is_empty();
     let visibility = dock.visibility;
-
-    // Determine the next state when clicking: cycle Hidden→Open, Collapsed→Open, Open→Hidden
-    let next_visibility = match visibility {
-        DockVisibility::Open => DockVisibility::Hidden,
-        DockVisibility::Collapsed | DockVisibility::Hidden => DockVisibility::Open,
-    };
 
     // Color based on visibility state
     let color = match visibility {
@@ -515,20 +511,15 @@ fn dock_control_button<'a>(
         ..button::Style::default()
     });
 
-    // Disable when empty and not open (no content to show)
+    // Empty dock: show label but disable interaction
     if is_empty && !dock.is_open() {
-        btn.style(move |_, _| button::Style {
-            background: Some(Background::Color(Color::TRANSPARENT)),
-            border: Border::default(),
-            ..button::Style::default()
-        })
-        .into()
+        btn.into()
+    } else if visibility == DockVisibility::Open {
+        btn.on_press(WorkspaceMessage::Command(Command::HideDock(side)))
+            .into()
     } else {
-        btn.on_press(WorkspaceMessage::DockVisibilityChanged {
-            side,
-            visibility: next_visibility,
-        })
-        .into()
+        btn.on_press(WorkspaceMessage::Command(Command::OpenDock(side)))
+            .into()
     }
 }
 

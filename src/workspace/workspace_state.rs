@@ -406,15 +406,6 @@ impl Workspace {
             WorkspaceMessage::ConfirmCloseCancel => {
                 self.close_confirmation = None;
             }
-            WorkspaceMessage::DockVisibilityChanged { side, visibility } => {
-                let was_focused = self.focused == PanelLocation::Dock(side);
-                self.docks.set_visibility(side, visibility);
-                if visibility == DockVisibility::Open && !self.docks.get(side).is_empty() {
-                    self.focused = PanelLocation::Dock(side);
-                } else if was_focused && visibility != DockVisibility::Open {
-                    self.return_focus_to_workbench();
-                }
-            }
         }
     }
 
@@ -573,7 +564,11 @@ impl Workspace {
                 }
             }
             PanelLocation::Dock(side) => {
+                let was_focused = self.focused == PanelLocation::Dock(side);
                 self.docks.get_mut(side).visibility = DockVisibility::Hidden;
+                if was_focused {
+                    self.return_focus_to_workbench();
+                }
             }
         }
     }
@@ -628,7 +623,7 @@ impl Workspace {
         }
     }
 
-    /// Return focus to the last Workbench pane, or the first center pane.
+    /// Return focus to the first center pane.
     fn return_focus_to_workbench(&mut self) {
         let first_pane = self.panes.iter().next().map(|(pane, _)| *pane);
         if let Some(pane) = first_pane {
@@ -705,7 +700,11 @@ impl Workspace {
                 }
             }
             PanelLocation::Dock(side) => {
+                let was_focused = self.focused == PanelLocation::Dock(side);
                 self.docks.get_mut(side).visibility = DockVisibility::Hidden;
+                if was_focused {
+                    self.return_focus_to_workbench();
+                }
             }
         }
     }
@@ -1050,6 +1049,18 @@ mod tests {
 
         assert!(workspace.docks.right.tabs.is_empty());
         assert!(workspace.docks.right.is_hidden());
+    }
+
+    #[test]
+    fn closing_last_tab_in_focused_dock_returns_focus_to_workbench() {
+        let (mut workspace, mut stores) = workspace_with_right_dock();
+        workspace.focused = PanelLocation::Dock(DockSide::Right);
+        workspace.docks.right.visibility = DockVisibility::Open;
+
+        workspace.apply_command(Command::CloseActiveTab, &mut stores);
+
+        assert!(workspace.docks.right.is_hidden());
+        assert!(matches!(workspace.focused, PanelLocation::Center(_)));
     }
 
     #[test]
