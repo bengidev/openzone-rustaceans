@@ -15,17 +15,17 @@ use iced::window;
 use iced::{Point, Size, Subscription};
 
 use crate::shared::design::{OpenZoneTheme, ThemeMode};
-use crate::workspace::command::{Chord, Command, Keymap};
-use crate::workspace::dock::Docks;
-use crate::workspace::drag::{
+use crate::workspace::workspace_command::{Chord, Command, Keymap};
+use crate::workspace::workspace_dock::Docks;
+use crate::workspace::workspace_drag::{
     Direction, DockRegions, DragState, DropTarget, PaneBounds, SplitPaneTarget, TabStripTarget,
     WindowDropGeometry, resolve_drop_target_in_geometry,
 };
-use crate::workspace::location::{DockSide, PanelLocation};
-use crate::workspace::message::WorkspaceMessage;
-use crate::workspace::pane_state::PaneState;
-use crate::workspace::panel::{ErasedMessage, Panel, PanelKind};
-use crate::workspace::stores::AppStores;
+use crate::workspace::workspace_location::{DockSide, PanelLocation};
+use crate::workspace::workspace_message::WorkspaceMessage;
+use crate::workspace::workspace_pane_state::PaneState;
+use crate::workspace::workspace_panel::{ErasedMessage, Panel, PanelKind};
+use crate::workspace::workspace_stores::AppStores;
 
 /// Drop preview shown on a workspace window while a tab is dragged from
 /// another OS window.
@@ -314,7 +314,7 @@ impl Workspace {
             WorkspaceMessage::CursorMoved(cursor) => {
                 if let Some(drag) = self.drag_state.as_ref() {
                     let (grid, pane_bounds, (rails, bodies)) = self.drag_geometry();
-                    let target = crate::workspace::drag::compute_drop_target(
+                    let target = crate::workspace::workspace_drag::compute_drop_target(
                         cursor,
                         grid,
                         &pane_bounds,
@@ -343,10 +343,11 @@ impl Workspace {
 
     /// Pane and dock rectangles used for drag hit-testing and preview.
     fn drag_geometry(&self) -> (iced::Rectangle, Vec<PaneBounds>, DockRegions) {
-        let grid = crate::workspace::drag::compute_grid_bounds(&self.docks, self.window_size);
-        let pane_bounds = crate::workspace::drag::compute_pane_bounds(&self.panes, grid);
+        let grid =
+            crate::workspace::workspace_drag::compute_grid_bounds(&self.docks, self.window_size);
+        let pane_bounds = crate::workspace::workspace_drag::compute_pane_bounds(&self.panes, grid);
         let dock_regions =
-            crate::workspace::drag::compute_dock_regions(&self.docks, self.window_size);
+            crate::workspace::workspace_drag::compute_dock_regions(&self.docks, self.window_size);
         (grid, pane_bounds, dock_regions)
     }
 
@@ -673,9 +674,9 @@ fn panel_subscriptions(
 mod tests {
     use super::*;
     use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
-    use crate::workspace::command::{Chord, Mods};
-    use crate::workspace::panel::{Panel, erase};
-    use crate::workspace::stores::CounterId;
+    use crate::workspace::workspace_command::{Chord, Mods};
+    use crate::workspace::workspace_panel::{Panel, erase};
+    use crate::workspace::workspace_stores::CounterId;
 
     /// Build a two-tab workspace plus the app-root stores it views over.
     fn three_tab_workspace() -> (Workspace, AppStores) {

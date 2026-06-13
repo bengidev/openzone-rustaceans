@@ -7,12 +7,12 @@
 //! spacing/radius scales, typography roles, and a theme struct that
 //! resolves tokens to concrete values per mode.
 
-pub mod palette;
-pub mod theme;
-pub mod tokens;
+pub mod design_palette;
+pub mod design_theme;
+pub mod design_tokens;
 
-pub use theme::{OpenZoneTheme, ThemeMode};
-pub use tokens::{
+pub use design_theme::{OpenZoneTheme, ThemeMode};
+pub use design_tokens::{
     AccentToken, ActionToken, BackgroundToken, BorderToken, ForegroundToken, RadiusToken,
     SpacingToken, StatusToken, TypeRole,
 };

@@ -13,8 +13,8 @@
 use iced::widget::{column, text};
 use iced::{Element, Length, Subscription};
 
-use crate::workspace::panel::{ErasedMessage, Panel, PanelKind};
-use crate::workspace::stores::AppStores;
+use crate::workspace::workspace_panel::{ErasedMessage, Panel, PanelKind};
+use crate::workspace::workspace_stores::AppStores;
 
 /// A panel that reads the global tick count from [`ClockStore`]. It
 /// holds no per-instance state — every Clock panel observes the same

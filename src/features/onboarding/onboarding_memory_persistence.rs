@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::features::onboarding::domain::{OnboardingPersistence, OnboardingPersistenceError};
+use super::onboarding_persistence::{OnboardingPersistence, OnboardingPersistenceError};
 
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryOnboardingPersistence {

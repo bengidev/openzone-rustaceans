@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
 
-use crate::features::onboarding::domain::{OnboardingPersistence, OnboardingPersistenceError};
+use super::onboarding_persistence::{OnboardingPersistence, OnboardingPersistenceError};
 
 const SENTINEL_FILENAME: &str = "onboarding-completed.flag";
 

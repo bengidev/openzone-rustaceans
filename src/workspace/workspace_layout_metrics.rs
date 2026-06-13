@@ -6,7 +6,7 @@
 use iced::{Rectangle, Size};
 
 use crate::shared::design::{SpacingToken, TypeRole};
-use crate::workspace::dock::{Dock, Docks};
+use crate::workspace::workspace_dock::{Dock, Docks};
 
 pub const SIDE_DOCK_WIDTH: f32 = 280.0;
 pub const BOTTOM_DOCK_HEIGHT: f32 = 200.0;

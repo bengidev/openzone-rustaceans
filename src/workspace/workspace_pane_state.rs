@@ -7,7 +7,7 @@
 //! within-pane tab move and a between-pane split are distinct concerns.
 //! Docks reuse this same `PaneState`.
 
-use crate::workspace::panel::Panel;
+use crate::workspace::workspace_panel::Panel;
 
 /// A stack of tabbed panels with one active tab.
 pub struct PaneState {
@@ -85,7 +85,7 @@ impl PaneState {
 mod tests {
     use super::*;
     use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
-    use crate::workspace::stores::AppStores;
+    use crate::workspace::workspace_stores::AppStores;
 
     fn three_tabs() -> PaneState {
         let mut stores = AppStores::new();

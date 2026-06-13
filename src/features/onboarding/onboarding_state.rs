@@ -10,12 +10,11 @@ use iced::Subscription;
 
 use crate::shared::design::{OpenZoneTheme, ThemeMode};
 
-use crate::features::onboarding::application::feature_card_dynamics::{approach, highlight_target};
-use crate::features::onboarding::application::onboarding_dynamics::dynamics_for_progress;
-use crate::features::onboarding::application::onboarding_messages::OnboardingMessage;
-use crate::features::onboarding::domain::{
-    OnboardingOutcome, OnboardingPersistence, OnboardingPersistenceError,
-};
+use super::onboarding_dynamics::dynamics_for_progress;
+use super::onboarding_feature_card_dynamics::{approach, highlight_target};
+use super::onboarding_messages::OnboardingMessage;
+use super::onboarding_outcome::OnboardingOutcome;
+use super::onboarding_persistence::{OnboardingPersistence, OnboardingPersistenceError};
 
 /// Number of main-feature highlight cards on the onboarding page.
 pub const FEATURE_COUNT: usize = 4;
@@ -144,7 +143,7 @@ pub fn mark_completed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::onboarding::infrastructure::memory_persistence::InMemoryOnboardingPersistence;
+    use crate::features::onboarding::onboarding_memory_persistence::InMemoryOnboardingPersistence;
 
     #[test]
     fn enter_yields_completed() {
