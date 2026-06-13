@@ -8,9 +8,9 @@
 //! Raw key chords and resolved commands flow through the same enum so
 //! key routing and command dispatch share the single reducer.
 
-use crate::workspace::command::{Chord, Command};
-use crate::workspace::location::PanelLocation;
-use crate::workspace::panel::ErasedMessage;
+use crate::workspace::workspace_command::{Chord, Command};
+use crate::workspace::workspace_location::PanelLocation;
+use crate::workspace::workspace_panel::ErasedMessage;
 use iced::widget::pane_grid;
 use iced::{Point, Size};
 
@@ -44,6 +44,7 @@ pub enum WorkspaceMessage {
     /// The workspace reducer does not handle this; the daemon lifts it
     /// to app-root window management.
     NewWindow,
+
     /// A drag-and-drop interaction on the center pane grid. On
     /// `Dropped` the reducer reorders the panes; other phases are no-ops.
     PaneDragged(pane_grid::DragEvent),

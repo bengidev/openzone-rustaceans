@@ -6,8 +6,8 @@
 
 use iced::Color;
 
-use crate::shared::design::palette;
-use crate::shared::design::tokens::{
+use crate::shared::design::design_palette as palette;
+use crate::shared::design::design_tokens::{
     AccentToken, ActionToken, BackgroundToken, BorderToken, ForegroundToken, StatusToken,
 };
 

@@ -10,9 +10,9 @@
 use iced::widget::{column, text, text_input};
 use iced::{Element, Length};
 
-use crate::workspace::command::{Chord, KeyRef};
-use crate::workspace::panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
-use crate::workspace::stores::AppStores;
+use crate::workspace::workspace_command::{Chord, KeyRef};
+use crate::workspace::workspace_panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
+use crate::workspace::workspace_stores::AppStores;
 
 /// Concrete message for the text panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,7 +103,7 @@ impl Panel for TextPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::command::Mods;
+    use crate::workspace::workspace_command::Mods;
 
     #[test]
     fn change_updates_content() {

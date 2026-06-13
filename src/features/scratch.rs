@@ -11,8 +11,7 @@
 use iced::widget::{container, text};
 use iced::{Element, Length};
 
-use crate::workspace::panel::{ErasedMessage, Panel, PanelKind};
-use crate::workspace::stores::AppStores;
+use crate::workspace::{AppStores, ErasedMessage, Panel, PanelKind};
 
 /// Non-durable fallback panel — the "untitled" tab every empty center
 /// pane starts with.

@@ -2,23 +2,41 @@
 
 //! Internal onboarding module — first-run onboarding flow.
 //!
-//! Layered along Clean Architecture lines:
+//! Flat layout with `onboarding_`-prefixed modules:
 //!
-//! * [`domain`] — pure contracts: outcomes, persistence trait.
-//! * [`application`] — state reducer, orb dynamics, slide navigation.
-//! * [`infrastructure`] — concrete persistence backends.
-//! * [`presenter`] — Iced view + canvas program.
+//! * [`onboarding_outcome`] — pure routing outcomes.
+//! * [`onboarding_persistence`] — persistence trait contract.
+//! * [`onboarding_state`] — state reducer.
+//! * [`onboarding_messages`] — message enum.
+//! * [`onboarding_dynamics`] — orb animation dynamics.
+//! * [`onboarding_feature_card_dynamics`] — feature card animation helpers.
+//! * [`onboarding_file_persistence`] — filesystem persistence backend.
+//! * [`onboarding_memory_persistence`] — in-memory persistence backend.
+//! * [`onboarding_view`] — Iced view.
+//! * [`onboarding_feature_card_icon`] — wireframe feature icons.
+//! * [`onboarding_galaxy_orb`] — galaxy orb canvas program.
+//! * [`onboarding_scene_backdrop`] — animated scene backdrop.
 //!
 //! The module exposes only the composition-facing façade.
 
-pub mod application;
-pub mod domain;
-pub mod infrastructure;
-pub mod presenter;
+pub mod onboarding_dynamics;
+pub mod onboarding_feature_card_dynamics;
+pub mod onboarding_feature_card_icon;
+pub mod onboarding_file_persistence;
+pub mod onboarding_galaxy_orb;
+pub mod onboarding_memory_persistence;
+pub mod onboarding_messages;
+pub mod onboarding_outcome;
+pub mod onboarding_persistence;
+pub mod onboarding_scene_backdrop;
+pub mod onboarding_state;
+pub mod onboarding_view;
 
-pub use application::{OnboardingMessage, OnboardingState, mark_completed};
-pub use domain::{OnboardingOutcome, OnboardingPersistence};
-pub use presenter::view;
+pub use onboarding_messages::OnboardingMessage;
+pub use onboarding_outcome::OnboardingOutcome;
+pub use onboarding_persistence::OnboardingPersistence;
+pub use onboarding_state::{OnboardingState, mark_completed};
+pub use onboarding_view::view;
 
 use iced::{Element, Subscription, Task, Theme};
 use std::sync::Arc;

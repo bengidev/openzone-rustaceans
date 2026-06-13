@@ -13,7 +13,7 @@
 //! Panels do not own domain data. Counter and Clock panels read their
 //! state from app-root stores ([`AppStores`]) handed in by the shell;
 //! the panel itself only carries the *handle* needed to address its
-//! slice of the store (a [`crate::workspace::stores::CounterId`] for
+//! slice of the store (a [`crate::workspace::workspace_stores::CounterId`] for
 //! Counter, nothing for Clock since the clock store is global). Their
 //! [`Panel::view`] and [`Panel::snapshot`] both take `&AppStores` so
 //! every render and persistence point sees the canonical store value.
@@ -35,8 +35,8 @@ use std::sync::Arc;
 use iced::{Element, Subscription};
 use serde::{Deserialize, Serialize};
 
-use crate::workspace::command::Chord;
-use crate::workspace::stores::AppStores;
+use crate::workspace::workspace_command::Chord;
+use crate::workspace::workspace_stores::AppStores;
 
 /// A panel message erased to a sendable, cloneable dynamic type.
 ///
@@ -129,7 +129,7 @@ pub trait Panel {
 
     /// Release any store slot this panel holds. Called by the workspace
     /// reducer when the tab carrying this panel is closed, so an
-    /// addressed [`crate::workspace::stores::CounterId`] never lingers
+    /// addressed [`crate::workspace::workspace_stores::CounterId`] never lingers
     /// past the lifetime of its addressing panel. Default: no-op (panels
     /// without a per-instance handle, like Clock or Text, do nothing).
     fn on_close(&mut self, _stores: &mut AppStores) {}

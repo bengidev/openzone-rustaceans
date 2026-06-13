@@ -13,38 +13,47 @@ no feature logic or shell behaviour accumulates there.
 
 ```text
 src/
-├── main.rs                          # composition root
+├── main.rs                                # composition root
 ├── features/
-│   ├── mod.rs
-│   ├── dummies/                     # current temporary dummy panels pending cutover
-│   ├── onboarding/
-│   │   ├── mod.rs                   # feature facade
-│   │   ├── onboarding_state.rs      # reducer, messages, dynamics
-│   │   ├── onboarding_persistence.rs# persistence contracts / routing outcomes
-│   │   ├── onboarding_messages.rs   # routing, side-effects
-│   │   └── onboarding_view.rs       # Iced view rendering
-│   └── scratch/                     # (planned) line-oriented unsaved text work surface
+│   ├── mod.rs                             # feature registry
+│   ├── dummies/                           # temporary dummy panels pending cutover
+│   └── onboarding/
+│       ├── mod.rs                         # feature facade
+│       ├── onboarding_messages.rs         # message enum
+│       ├── onboarding_state.rs            # reducer + state struct
+│       ├── onboarding_dynamics.rs         # orb animation dynamics
+│       ├── onboarding_feature_card_dynamics.rs # highlight card animation
+│       ├── onboarding_outcome.rs          # routing outcomes
+│       ├── onboarding_persistence.rs      # persistence trait contract
+│       ├── onboarding_file_persistence.rs # filesystem backend
+│       ├── onboarding_memory_persistence.rs # in-memory backend
+│       ├── onboarding_view.rs             # Iced view
+│       ├── onboarding_feature_card_icon.rs # wireframe card icons
+│       ├── onboarding_galaxy_orb.rs       # galaxy orb canvas program
+│       └── onboarding_scene_backdrop.rs   # animated dot-grid backdrop
 ├── shared/
-│   ├── mod.rs
+│   ├── mod.rs                             # shared facade
 │   └── design/
-│       ├── mod.rs                   # facade
-│       ├── design_tokens.rs         # palette, tokens
-│       └── design_theme.rs          # theme resolver
+│       ├── mod.rs                         # design facade
+│       ├── design_palette.rs              # color constants
+│       ├── design_tokens.rs               # typed token enums
+│       └── design_theme.rs               # theme resolver
 └── workspace/
-    ├── mod.rs                       # context facade
-    ├── workspace_state.rs           # layout engine, reducer
-    ├── workspace_message.rs         # workspace message types
-    ├── workspace_view.rs            # workspace Iced view
-    ├── workspace_stores.rs          # AppStores definition
-    ├── workspace_drag.rs            # drag geometry and drop targets
-    ├── workspace_panel.rs           # Panel port trait
-    ├── workspace_command.rs         # command system, keymaps
-    ├── workspace_registry.rs        # PanelKind -> constructor
-    ├── workspace_pane_state.rs      # PaneState (tab stack)
-    ├── workspace_dock.rs            # dock types and visibility
-    ├── workspace_layout_metrics.rs  # layout spacing and metrics
-    ├── workspace_location.rs        # PanelLocation addressing
-    └── workspace_persistence.rs     # layout persistence
+    ├── mod.rs                             # context facade
+    ├── workspace_command.rs               # command system, keymaps
+    ├── workspace_dock.rs                  # dock types and visibility
+    ├── workspace_drag.rs                  # drag geometry and drop targets
+    ├── workspace_layout_metrics.rs        # layout spacing and metrics
+    ├── workspace_layout_store.rs          # layout store trait
+    ├── workspace_location.rs              # PanelLocation addressing
+    ├── workspace_message.rs               # workspace message types
+    ├── workspace_pane_state.rs            # PaneState (tab stack)
+    ├── workspace_panel.rs                 # Panel port trait
+    ├── workspace_persistence.rs           # layout persistence
+    ├── workspace_registry.rs              # PanelKind -> constructor
+    ├── workspace_state.rs                 # layout engine, reducer
+    ├── workspace_stores.rs                # AppStores definition
+    └── workspace_view.rs                  # workspace Iced view
 ```
 
 ## Module conventions

@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
 
-use crate::workspace::persistence::LayoutSnapshot;
+use crate::workspace::workspace_persistence::LayoutSnapshot;
 
 const LAYOUT_FILENAME: &str = "workspace-layout.json";
 
@@ -95,7 +95,9 @@ impl LayoutStore for FileLayoutStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::persistence::{CenterNode, DockSnapshot, FocusSnapshot, PaneSnapshot};
+    use crate::workspace::workspace_persistence::{
+        CenterNode, DockSnapshot, FocusSnapshot, PaneSnapshot,
+    };
     use tempfile::TempDir;
 
     fn sample_snapshot() -> LayoutSnapshot {

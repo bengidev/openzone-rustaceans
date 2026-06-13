@@ -11,19 +11,19 @@
 //!
 //! This module is pure: it converts between the live [`Workspace`] and a
 //! serializable [`LayoutSnapshot`]. Filesystem IO lives in
-//! [`crate::workspace::layout_store`].
+//! [`crate::workspace::workspace_layout_store`].
 
 use iced::widget::pane_grid::{self, Axis, Configuration, Node};
 use serde::{Deserialize, Serialize};
 
 use crate::shared::design::ThemeMode;
-use crate::workspace::dock::{Dock, Docks};
-use crate::workspace::location::{DockSide, PanelLocation};
-use crate::workspace::pane_state::PaneState;
-use crate::workspace::panel::{Panel, PanelKind};
-use crate::workspace::registry::PanelRegistry;
-use crate::workspace::state::Workspace;
-use crate::workspace::stores::AppStores;
+use crate::workspace::workspace_dock::{Dock, Docks};
+use crate::workspace::workspace_location::{DockSide, PanelLocation};
+use crate::workspace::workspace_pane_state::PaneState;
+use crate::workspace::workspace_panel::{Panel, PanelKind};
+use crate::workspace::workspace_registry::PanelRegistry;
+use crate::workspace::workspace_state::Workspace;
+use crate::workspace::workspace_stores::AppStores;
 
 /// A panel reduced to its rehydration handle: which kind, plus the
 /// handle-only JSON the panel's own `snapshot()` produced.
@@ -224,7 +224,7 @@ fn capture_dock(dock: &Dock, stores: &AppStores) -> DockSnapshot {
 
 /// Rebuild a [`Workspace`] from a snapshot. Each panel is rehydrated
 /// through the registry from its handle (which may allocate a fresh
-/// store slot — e.g. a [`crate::workspace::stores::CounterId`] seeded
+/// store slot — e.g. a [`crate::workspace::workspace_stores::CounterId`] seeded
 /// at the persisted count); an unknown kind (no registered constructor)
 /// is dropped, and the active index is clamped to the surviving tabs
 /// so it never dangles.
@@ -308,9 +308,9 @@ mod tests {
     use super::*;
     use crate::features::ScratchPanel;
     use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
-    use crate::workspace::command::Command;
-    use crate::workspace::location::DockSide;
-    use crate::workspace::stores::AppStores;
+    use crate::workspace::workspace_command::Command;
+    use crate::workspace::workspace_location::DockSide;
+    use crate::workspace::workspace_stores::AppStores;
 
     fn test_registry() -> PanelRegistry {
         let mut registry = PanelRegistry::new();

@@ -12,8 +12,8 @@
 use iced::widget::{button, column, text};
 use iced::{Element, Length};
 
-use crate::workspace::panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
-use crate::workspace::stores::{AppStores, CounterId};
+use crate::workspace::workspace_panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
+use crate::workspace::workspace_stores::{AppStores, CounterId};
 
 /// Concrete intent for the counter panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +22,7 @@ pub enum CounterMessage {
     Decrement,
 }
 
-/// A panel addressing one slot in [`crate::workspace::stores::CounterStore`].
+/// A panel addressing one slot in [`crate::workspace::workspace_stores::CounterStore`].
 pub struct CounterPanel {
     id: CounterId,
 }

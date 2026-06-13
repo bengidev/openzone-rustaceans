@@ -25,14 +25,14 @@ use iced::{Element, Size, Subscription, Task, Theme, window};
 use crate::features::ScratchPanel;
 #[cfg(test)]
 use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
-use crate::features::onboarding::infrastructure::file_persistence::FileOnboardingPersistence;
-use crate::features::onboarding::infrastructure::memory_persistence::InMemoryOnboardingPersistence;
+use crate::features::onboarding::onboarding_file_persistence::FileOnboardingPersistence;
+use crate::features::onboarding::onboarding_memory_persistence::InMemoryOnboardingPersistence;
 use crate::features::onboarding::{
     OnboardingMessage, OnboardingOutcome, OnboardingPersistence, OnboardingState, mark_completed,
     view as onboarding_view,
 };
 use crate::shared::design::ThemeMode;
-use crate::workspace::state::tab_drag_subscription;
+use crate::workspace::workspace_state::tab_drag_subscription;
 use crate::workspace::{
     AppStores, Chord, CrossWindowDropPreview, DragState, DropTarget, FileLayoutStore, LayoutStore,
     Mods, PaneState, Panel, PanelKind, PanelRegistry, Workspace, WorkspaceMessage,
@@ -375,7 +375,7 @@ impl OpenZone {
         }
 
         if let Some(workspace) = self.workspaces.get(&window) {
-            return workspace::view::view(workspace, &self.stores)
+            return workspace::workspace_view::view(workspace, &self.stores)
                 .map(move |message| Message::Workspace { window, message });
         }
 
@@ -566,7 +566,7 @@ fn build_secondary_workspace(_stores: &mut AppStores, theme_mode: ThemeMode) -> 
 #[cfg(test)]
 mod cross_window_tab_drop_tests {
     use super::*;
-    use crate::workspace::location::PanelLocation;
+    use crate::workspace::workspace_location::PanelLocation;
     use crate::workspace::{DropTarget, TabStripTarget};
 
     fn two_workspace_app() -> (OpenZone, window::Id, window::Id) {
@@ -618,12 +618,14 @@ mod cross_window_tab_drop_tests {
         );
 
         let pane_b = *app.workspaces[&window_b].panes.iter().next().unwrap().0;
-        let grid = crate::workspace::drag::compute_grid_bounds(
+        let grid = crate::workspace::workspace_drag::compute_grid_bounds(
             &app.workspaces[&window_b].docks,
             app.workspaces[&window_b].window_size,
         );
-        let pane_bounds =
-            crate::workspace::drag::compute_pane_bounds(&app.workspaces[&window_b].panes, grid);
+        let pane_bounds = crate::workspace::workspace_drag::compute_pane_bounds(
+            &app.workspaces[&window_b].panes,
+            grid,
+        );
         let pb = &pane_bounds[0];
         let cursor = iced::Point::new(pb.tab_strip.x + 20.0, pb.tab_strip.y + 4.0);
         app.route_tab_drag_cursor(window_a, window_b, cursor);
@@ -741,12 +743,14 @@ mod cross_window_tab_drop_tests {
         );
 
         let pane_b = *app.workspaces[&window_b].panes.iter().next().unwrap().0;
-        let grid = crate::workspace::drag::compute_grid_bounds(
+        let grid = crate::workspace::workspace_drag::compute_grid_bounds(
             &app.workspaces[&window_b].docks,
             app.workspaces[&window_b].window_size,
         );
-        let pane_bounds =
-            crate::workspace::drag::compute_pane_bounds(&app.workspaces[&window_b].panes, grid);
+        let pane_bounds = crate::workspace::workspace_drag::compute_pane_bounds(
+            &app.workspaces[&window_b].panes,
+            grid,
+        );
         let pb = &pane_bounds[0];
         let inside = iced::Point::new(pb.tab_strip.x + 20.0, pb.tab_strip.y + 4.0);
         app.route_tab_drag_cursor(window_a, window_b, inside);
@@ -854,11 +858,11 @@ mod cross_window_tab_drop_tests {
             &mut app.stores,
         );
 
-        let grid = crate::workspace::drag::compute_grid_bounds(
+        let grid = crate::workspace::workspace_drag::compute_grid_bounds(
             &app.workspaces[&window_b].docks,
             app.workspaces[&window_b].window_size,
         );
-        let (_, bodies) = crate::workspace::drag::compute_dock_regions(
+        let (_, bodies) = crate::workspace::workspace_drag::compute_dock_regions(
             &app.workspaces[&window_b].docks,
             app.workspaces[&window_b].window_size,
         );
@@ -868,7 +872,7 @@ mod cross_window_tab_drop_tests {
             .expect("left dock body");
         let cursor = iced::Point::new(
             left_body.x + 12.0,
-            left_body.y + crate::workspace::layout_metrics::tab_strip_height() / 2.0,
+            left_body.y + crate::workspace::workspace_layout_metrics::tab_strip_height() / 2.0,
         );
         app.route_tab_drag_cursor(window_a, window_b, cursor);
 

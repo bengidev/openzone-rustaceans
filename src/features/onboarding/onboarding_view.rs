@@ -14,14 +14,14 @@ use iced::widget::{MouseArea, Space, Stack, button, column, container, row, text
 
 use crate::shared::design::OpenZoneTheme;
 use crate::shared::design::ThemeMode;
-use crate::shared::design::tokens::{
+use crate::shared::design::design_tokens::{
     ActionToken, BackgroundToken, BorderToken, ForegroundToken, RadiusToken, SpacingToken, TypeRole,
 };
 
-use crate::features::onboarding::application::onboarding_messages::OnboardingMessage;
-use crate::features::onboarding::application::onboarding_state::OnboardingState;
-use crate::features::onboarding::presenter::galaxy_orb::GalaxyOrbProgram;
-use crate::features::onboarding::presenter::scene_backdrop::SceneBackdrop;
+use super::onboarding_galaxy_orb::GalaxyOrbProgram;
+use super::onboarding_messages::OnboardingMessage;
+use super::onboarding_scene_backdrop::SceneBackdrop;
+use super::onboarding_state::OnboardingState;
 
 const HERO_MAX_WIDTH: f32 = 600.0;
 const ORB_HEIGHT: f32 = 360.0;
