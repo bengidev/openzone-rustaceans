@@ -310,6 +310,24 @@ impl Workspace {
     /// reducer is the single writer of both layout state (via `&mut
     /// self`) and domain state (via `&mut AppStores`).
     pub fn update(&mut self, message: WorkspaceMessage, stores: &mut AppStores) {
+        if self.close_confirmation.is_some() {
+            match message {
+                WorkspaceMessage::ConfirmCloseDiscard { .. } => {
+                    if let Some(confirm) = self.close_confirmation.take() {
+                        self.close_tab_immediately(confirm.location, confirm.tab, stores);
+                    }
+                }
+                WorkspaceMessage::ConfirmCloseCancel => {
+                    self.close_confirmation = None;
+                }
+                WorkspaceMessage::WindowResized(size) => {
+                    self.window_size = size;
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match message {
             WorkspaceMessage::PaneClicked(pane) => {
                 self.focused = PanelLocation::Center(pane);
@@ -1046,6 +1064,58 @@ mod tests {
             panic!("expected center location");
         };
         assert_eq!(workspace.panes.get(pane).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn close_confirmation_blocks_underlying_workspace_messages() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+        workspace.close_confirmation = Some(CloseConfirmation {
+            location,
+            tab: 0,
+            message: std::borrow::Cow::Borrowed("Discard changes to untitled?"),
+        });
+
+        workspace.update(
+            WorkspaceMessage::TabSelected { location, tab: 1 },
+            &mut stores,
+        );
+        workspace.update(
+            WorkspaceMessage::Key(Chord::ch('w', Mods::CMD)),
+            &mut stores,
+        );
+
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center location");
+        };
+        let pane_state = workspace.panes.get(pane).unwrap();
+        assert_eq!(pane_state.active, 0);
+        assert_eq!(pane_state.len(), 2);
+        assert!(workspace.close_confirmation.is_some());
+    }
+
+    #[test]
+    fn discard_confirmation_closes_stored_tab_after_blocked_input() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+        workspace.close_confirmation = Some(CloseConfirmation {
+            location,
+            tab: 0,
+            message: std::borrow::Cow::Borrowed("Discard changes to untitled?"),
+        });
+
+        workspace.update(
+            WorkspaceMessage::ConfirmCloseDiscard { location, tab: 1 },
+            &mut stores,
+        );
+
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center location");
+        };
+        let pane_state = workspace.panes.get(pane).unwrap();
+        assert_eq!(pane_state.len(), 1);
+        assert_eq!(pane_state.tabs[0].title(), "Text");
+        assert!(workspace.close_confirmation.is_none());
     }
 
     #[test]
