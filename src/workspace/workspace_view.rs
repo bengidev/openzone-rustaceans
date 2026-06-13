@@ -449,7 +449,7 @@ fn status_bar(theme: OpenZoneTheme, workspace: &Workspace) -> Element<'_, Worksp
         ),
         dock_control_button(theme, DockSide::Bottom, &workspace.docks.bottom, "Output"),
     ]
-    .spacing(SpacingToken::S2.value() as f32);
+    .spacing(SpacingToken::S2.value());
 
     // Layout: left segment fills, right segment shrinks
     let bar = row![container(label).width(Length::Fill), dock_controls,]
