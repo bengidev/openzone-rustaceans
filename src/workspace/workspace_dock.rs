@@ -3,40 +3,94 @@
 //! Edge docks.
 //!
 //! A [`Dock`] wraps a [`PaneState`] (the same tab-stack model the center
-//! panes use) plus an open/collapsed flag. [`Docks`] owns the three edge
-//! docks and answers the focus/routing/render questions the workspace
-//! asks. A collapsed dock keeps its tabs — collapsing only hides the
-//! body and shows a minimal rail; reopening restores the prior tabs and
-//! active selection.
+//! panes use) plus a tri-state visibility flag ([`DockVisibility`]).
+//! [`Docks`] owns the three edge docks and answers the focus/routing/
+//! render questions the workspace asks.
+//!
+//! Visibility states:
+//! - **Hidden** — no rail, no body; consumes no layout space.
+//! - **Collapsed** — rail only; keeps tabs.
+//! - **Open** — body shown at remembered extent; keeps tabs.
+//!
+//! Closing an open dock hides it (→ Hidden), not collapses it.
+//! Collapsing is a distinct user action (→ Collapsed).
+
+use serde::{Deserialize, Serialize};
 
 use crate::workspace::workspace_location::DockSide;
 use crate::workspace::workspace_pane_state::PaneState;
 
-/// One edge dock: a tab stack plus its open/collapsed state.
+/// Tri-state dock visibility.
+///
+/// - `Hidden`    — no rail, no body; consumes no layout space.
+/// - `Collapsed` — rail only; retains tabs.
+/// - `Open`      — body shown at remembered extent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DockVisibility {
+    Hidden,
+    Collapsed,
+    Open,
+}
+
+/// One edge dock: a tab stack plus its visibility state.
 pub struct Dock {
     /// The dock's tabbed content, sharing the center pane model.
     pub tabs: PaneState,
-    /// Whether the dock body is shown. Collapsed docks render as a rail
-    /// but retain their tabs.
-    pub open: bool,
+    /// Whether the dock body, rail, or nothing is shown.
+    pub visibility: DockVisibility,
 }
 
 impl Dock {
-    /// Build a dock from its tabs. Docks start collapsed so the shell
+    /// Build a dock from its tabs. Docks start hidden so the shell
     /// opens to the center workspace; the user reveals docks on demand.
     pub fn new(tabs: PaneState) -> Self {
-        Self { tabs, open: false }
+        Self {
+            tabs,
+            visibility: DockVisibility::Hidden,
+        }
     }
 
     /// Build a dock that starts open.
     pub fn open_with(tabs: PaneState) -> Self {
-        Self { tabs, open: true }
+        Self {
+            tabs,
+            visibility: DockVisibility::Open,
+        }
     }
 
-    /// Flip open/collapsed and report the new state.
-    pub fn toggle(&mut self) -> bool {
-        self.open = !self.open;
-        self.open
+    /// Set visibility to Open.
+    pub fn open(&mut self) {
+        self.visibility = DockVisibility::Open;
+    }
+
+    /// Set visibility to Collapsed.
+    pub fn collapse(&mut self) {
+        self.visibility = DockVisibility::Collapsed;
+    }
+
+    /// Set visibility to Hidden.
+    pub fn hide(&mut self) {
+        self.visibility = DockVisibility::Hidden;
+    }
+
+    /// Whether the dock body is shown.
+    pub fn is_open(&self) -> bool {
+        self.visibility == DockVisibility::Open
+    }
+
+    /// Whether the dock shows a rail only.
+    pub fn is_collapsed(&self) -> bool {
+        self.visibility == DockVisibility::Collapsed
+    }
+
+    /// Whether the dock is hidden (no rail, no body).
+    pub fn is_hidden(&self) -> bool {
+        self.visibility == DockVisibility::Hidden
+    }
+
+    /// Whether the dock shows anything at all (rail or body).
+    pub fn is_visible(&self) -> bool {
+        self.visibility != DockVisibility::Hidden
     }
 
     /// Whether the dock has no tabs left.
@@ -95,17 +149,16 @@ impl Docks {
         }
     }
 
-    /// Toggle a dock's open state, returning the new state. Toggling an
-    /// empty dock open is allowed but the view renders nothing until it
-    /// has tabs; this keeps the command total over all sides.
-    pub fn toggle(&mut self, side: DockSide) -> bool {
-        self.get_mut(side).toggle()
+    /// Set a dock's visibility.
+    pub fn set_visibility(&mut self, side: DockSide, visibility: DockVisibility) {
+        self.get_mut(side).visibility = visibility;
     }
 
-    /// Whether a dock is currently open *and* has content to show.
+    /// Whether a dock is currently visible *and* has content to show.
+    /// A hidden dock or an empty dock is not visible.
     pub fn is_visible(&self, side: DockSide) -> bool {
         let dock = self.get(side);
-        dock.open && !dock.is_empty()
+        dock.visibility != DockVisibility::Hidden && !dock.is_empty()
     }
 }
 
@@ -121,42 +174,48 @@ mod tests {
     }
 
     #[test]
-    fn docks_start_collapsed() {
+    fn docks_start_hidden() {
         let docks = Docks::new(one_tab(), one_tab(), one_tab());
-        assert!(!docks.left.open);
-        assert!(!docks.right.open);
-        assert!(!docks.bottom.open);
+        assert!(!docks.left.is_open());
+        assert!(docks.left.is_hidden());
+        assert!(!docks.right.is_open());
+        assert!(docks.right.is_hidden());
+        assert!(!docks.bottom.is_open());
+        assert!(docks.bottom.is_hidden());
     }
 
     #[test]
-    fn toggle_opens_then_collapses() {
+    fn set_visibility_transitions() {
         let mut docks = Docks::new(one_tab(), one_tab(), one_tab());
-        assert!(docks.toggle(DockSide::Left));
-        assert!(docks.left.open);
-        assert!(!docks.toggle(DockSide::Left));
-        assert!(!docks.left.open);
+        docks.set_visibility(DockSide::Left, DockVisibility::Open);
+        assert!(docks.left.is_open());
+        docks.set_visibility(DockSide::Left, DockVisibility::Collapsed);
+        assert!(docks.left.is_collapsed());
+        docks.set_visibility(DockSide::Left, DockVisibility::Hidden);
+        assert!(docks.left.is_hidden());
     }
 
     #[test]
     fn collapsing_retains_tabs() {
         let mut docks = Docks::new(one_tab(), one_tab(), one_tab());
-        docks.toggle(DockSide::Right);
-        docks.toggle(DockSide::Right);
+        docks.set_visibility(DockSide::Right, DockVisibility::Open);
+        docks.set_visibility(DockSide::Right, DockVisibility::Collapsed);
+        docks.set_visibility(DockSide::Right, DockVisibility::Hidden);
         assert_eq!(docks.right.tabs.len(), 1);
     }
 
     #[test]
     fn empty_dock_is_not_visible_even_when_open() {
         let mut docks = Docks::empty();
-        docks.toggle(DockSide::Bottom);
-        assert!(docks.bottom.open);
+        docks.set_visibility(DockSide::Bottom, DockVisibility::Open);
+        assert!(docks.bottom.is_open());
         assert!(!docks.is_visible(DockSide::Bottom));
     }
 
     #[test]
     fn open_dock_with_tabs_is_visible() {
         let mut docks = Docks::new(one_tab(), one_tab(), one_tab());
-        docks.toggle(DockSide::Left);
+        docks.set_visibility(DockSide::Left, DockVisibility::Open);
         assert!(docks.is_visible(DockSide::Left));
     }
 }

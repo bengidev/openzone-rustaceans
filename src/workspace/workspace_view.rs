@@ -15,7 +15,7 @@ use crate::shared::design::{
     BackgroundToken, BorderToken, ForegroundToken, OpenZoneTheme, RadiusToken, SpacingToken,
     ThemeMode, TypeRole,
 };
-use crate::workspace::workspace_dock::Dock;
+use crate::workspace::workspace_dock::{Dock, DockVisibility};
 use crate::workspace::workspace_drag as drag;
 use crate::workspace::workspace_layout_metrics::{
     self as layout_metrics, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, SIDE_DOCK_WIDTH,
@@ -34,7 +34,7 @@ use iced::widget::{
     Canvas, PaneGrid, button, canvas, column, container, mouse_area, pane_grid, row, space, stack,
     text,
 };
-use iced::{Background, Border, Color, Element, Length, Point, Rectangle, Size, mouse};
+use iced::{Alignment, Background, Border, Color, Element, Length, Point, Rectangle, Size, mouse};
 
 /// Render the whole workspace shell as a view over `stores`.
 ///
@@ -222,11 +222,11 @@ fn dock_side<'a>(
     let location = PanelLocation::Dock(side);
     let focused = workspace.is_focused(location);
 
-    if dock.is_empty() {
+    if dock.is_empty() || dock.is_hidden() {
         return space::horizontal().width(Length::Shrink).into();
     }
 
-    if dock.open {
+    if dock.is_open() {
         let body = focus_on_click(
             pane_body(theme, location, &dock.tabs, focused, stores, workspace),
             location,
@@ -247,6 +247,7 @@ fn dock_side<'a>(
             .into();
     }
 
+    // Collapsed: render rail
     dock_rail(theme, side, location, focused, true)
 }
 
@@ -259,11 +260,11 @@ fn dock_bottom<'a>(
     let location = PanelLocation::Dock(DockSide::Bottom);
     let focused = workspace.is_focused(location);
 
-    if dock.is_empty() {
+    if dock.is_empty() || dock.is_hidden() {
         return space::vertical().height(Length::Shrink).into();
     }
 
-    if dock.open {
+    if dock.is_open() {
         let body = focus_on_click(
             pane_body(theme, location, &dock.tabs, focused, stores, workspace),
             location,
@@ -284,6 +285,7 @@ fn dock_bottom<'a>(
             .into();
     }
 
+    // Collapsed: render rail
     dock_rail(theme, DockSide::Bottom, location, focused, false)
 }
 
@@ -436,11 +438,89 @@ fn status_bar(theme: OpenZoneTheme, workspace: &Workspace) -> Element<'_, Worksp
             color: Some(theme.foreground(ForegroundToken::Secondary)),
         });
 
-    container(label)
+    // Right-side dock controls
+    let dock_controls = row![
+        dock_control_button(theme, DockSide::Left, &workspace.docks.left, "Activity"),
+        dock_control_button(
+            theme,
+            DockSide::Right,
+            &workspace.docks.right,
+            "Conversation"
+        ),
+        dock_control_button(theme, DockSide::Bottom, &workspace.docks.bottom, "Output"),
+    ]
+    .spacing(SpacingToken::S2.value());
+
+    // Layout: left segment fills, right segment shrinks
+    let bar = row![container(label).width(Length::Fill), dock_controls,]
         .width(Length::Fill)
-        .padding(SpacingToken::S2.value())
+        .align_y(Alignment::Center)
+        .padding(SpacingToken::S2.value());
+
+    container(bar)
+        .width(Length::Fill)
         .style(move |_| bar_style(theme, BackgroundToken::Secondary))
         .into()
+}
+
+fn dock_control_button<'a>(
+    theme: OpenZoneTheme,
+    side: DockSide,
+    dock: &Dock,
+    label: &'static str,
+) -> Element<'a, WorkspaceMessage> {
+    use crate::workspace::workspace_command::Command;
+
+    let is_empty = dock.is_empty();
+    let visibility = dock.visibility;
+
+    // Color based on visibility state
+    let color = match visibility {
+        DockVisibility::Open => theme.foreground(ForegroundToken::Accent),
+        DockVisibility::Collapsed => theme.foreground(ForegroundToken::Secondary),
+        DockVisibility::Hidden => theme.foreground(ForegroundToken::Muted),
+    };
+
+    // Label with state indicator
+    let display_label = match visibility {
+        DockVisibility::Open => format!("▾ {label}"),
+        DockVisibility::Collapsed => format!("▸ {label}"),
+        DockVisibility::Hidden => label.to_string(),
+    };
+
+    let btn = button(
+        text(display_label)
+            .size(TypeRole::MonoSm.size())
+            .style(move |_| text::Style { color: Some(color) }),
+    )
+    .padding([
+        SpacingToken::S1.value() as u16,
+        SpacingToken::S2.value() as u16,
+    ])
+    .style(move |_, _| button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        border: Border {
+            color: if visibility == DockVisibility::Open {
+                theme.foreground(ForegroundToken::Accent)
+            } else {
+                Color::TRANSPARENT
+            },
+            width: 1.0,
+            radius: RadiusToken::Sm.value().into(),
+        },
+        ..button::Style::default()
+    });
+
+    // Empty dock: show label but disable interaction
+    if is_empty && !dock.is_open() {
+        btn.into()
+    } else if visibility == DockVisibility::Open {
+        btn.on_press(WorkspaceMessage::Command(Command::HideDock(side)))
+            .into()
+    } else {
+        btn.on_press(WorkspaceMessage::Command(Command::OpenDock(side)))
+            .into()
+    }
 }
 
 /// Wrap a dock body so a click anywhere in it moves focus to that dock.

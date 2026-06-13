@@ -17,7 +17,7 @@ use iced::widget::pane_grid::{self, Axis, Configuration, Node};
 use serde::{Deserialize, Serialize};
 
 use crate::shared::design::ThemeMode;
-use crate::workspace::workspace_dock::{Dock, Docks};
+use crate::workspace::workspace_dock::{Dock, DockVisibility, Docks};
 use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_pane_state::PaneState;
 use crate::workspace::workspace_panel::{Panel, PanelKind};
@@ -77,11 +77,11 @@ pub enum CenterNode {
     Pane(PaneSnapshot),
 }
 
-/// One edge dock's persisted state: its tab stack plus open/collapsed.
+/// One edge dock's persisted state: its tab stack plus tri-state visibility.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockSnapshot {
     pub tabs: PaneSnapshot,
-    pub open: bool,
+    pub visibility: DockVisibility,
 }
 
 /// The persisted focus location. Center focus is stored as a *leaf
@@ -216,7 +216,7 @@ fn capture_pane(pane_state: &PaneState, stores: &AppStores) -> PaneSnapshot {
 fn capture_dock(dock: &Dock, stores: &AppStores) -> DockSnapshot {
     DockSnapshot {
         tabs: capture_pane(&dock.tabs, stores),
-        open: dock.open,
+        visibility: dock.visibility,
     }
 }
 
@@ -299,7 +299,7 @@ fn restore_pane(
 fn restore_dock(snapshot: &DockSnapshot, registry: &PanelRegistry, stores: &mut AppStores) -> Dock {
     Dock {
         tabs: restore_pane(&snapshot.tabs, registry, stores),
-        open: snapshot.open,
+        visibility: snapshot.visibility,
     }
 }
 
@@ -380,7 +380,7 @@ mod tests {
         let (mut workspace, mut stores) = seeded_workspace();
         // Build a non-trivial layout: a split, a focus move, an open dock.
         workspace.apply_command(Command::SplitFocused, &mut stores);
-        workspace.apply_command(Command::ToggleDock(DockSide::Right), &mut stores);
+        workspace.apply_command(Command::OpenDock(DockSide::Right), &mut stores);
 
         let first = capture(&workspace, &stores);
         let mut restored_stores = AppStores::new();
@@ -448,7 +448,7 @@ mod tests {
     #[test]
     fn restore_preserves_dock_open_state_and_focus() {
         let (mut workspace, mut stores) = seeded_workspace();
-        workspace.apply_command(Command::ToggleDock(DockSide::Right), &mut stores);
+        workspace.apply_command(Command::OpenDock(DockSide::Right), &mut stores);
 
         let snapshot = capture(&workspace, &stores);
         let mut restored_stores = AppStores::new();
@@ -459,7 +459,7 @@ mod tests {
             ThemeMode::Dark,
         );
 
-        assert!(restored.docks.right.open);
+        assert!(restored.docks.right.is_open());
         assert_eq!(restored.focused, PanelLocation::Dock(DockSide::Right));
     }
 

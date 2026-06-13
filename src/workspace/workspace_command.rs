@@ -19,8 +19,12 @@ use crate::workspace::workspace_location::DockSide;
 /// keymap, future menus, and the command palette share one vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Command {
-    /// Toggle a dock open/collapsed.
-    ToggleDock(DockSide),
+    /// Open a dock (Hidden→Open, Collapsed→Open, Open→no-op).
+    OpenDock(DockSide),
+    /// Collapse an open dock (Open→Collapsed, others no-op).
+    CollapseDock(DockSide),
+    /// Hide a dock (Open→Hidden, Collapsed→Hidden, Hidden→no-op).
+    HideDock(DockSide),
     /// Split the focused center pane, creating a sibling pane. Docks
     /// cannot be split, so this is a no-op when a dock is focused.
     SplitFocused,
@@ -181,29 +185,26 @@ pub fn chord_from_keyboard_event(event: &iced::keyboard::Event) -> Option<Chord>
         _ => return None,
     };
 
-    Some(Chord::new(key_ref, mods))
+    Some(Chord { mods, key: key_ref })
 }
 
 impl Default for Keymap {
     /// The shipped workspace bindings:
     ///
-    /// * `Cmd+1/2/3` — toggle the left / right / bottom dock.
+    /// * `Cmd+1/2/3` — open the left / right / bottom dock.
     /// * `Cmd+D` — split the focused pane.
     /// * `Cmd+W` — close the active tab.
     fn default() -> Self {
         let mut keymap = Keymap::new();
         keymap
-            .bind(
-                Chord::ch('1', Mods::CMD),
-                Command::ToggleDock(DockSide::Left),
-            )
+            .bind(Chord::ch('1', Mods::CMD), Command::OpenDock(DockSide::Left))
             .bind(
                 Chord::ch('2', Mods::CMD),
-                Command::ToggleDock(DockSide::Right),
+                Command::OpenDock(DockSide::Right),
             )
             .bind(
                 Chord::ch('3', Mods::CMD),
-                Command::ToggleDock(DockSide::Bottom),
+                Command::OpenDock(DockSide::Bottom),
             )
             .bind(Chord::ch('d', Mods::CMD), Command::SplitFocused)
             .bind(Chord::ch('w', Mods::CMD), Command::CloseActiveTab);
@@ -259,15 +260,15 @@ mod tests {
         let keymap = Keymap::default();
         assert_eq!(
             keymap.resolve(Chord::ch('1', Mods::CMD)),
-            Some(Command::ToggleDock(DockSide::Left))
+            Some(Command::OpenDock(DockSide::Left))
         );
         assert_eq!(
             keymap.resolve(Chord::ch('2', Mods::CMD)),
-            Some(Command::ToggleDock(DockSide::Right))
+            Some(Command::OpenDock(DockSide::Right))
         );
         assert_eq!(
             keymap.resolve(Chord::ch('3', Mods::CMD)),
-            Some(Command::ToggleDock(DockSide::Bottom))
+            Some(Command::OpenDock(DockSide::Bottom))
         );
         assert_eq!(
             keymap.resolve(Chord::ch('d', Mods::CMD)),

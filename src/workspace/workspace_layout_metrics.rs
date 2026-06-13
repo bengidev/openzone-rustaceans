@@ -6,7 +6,7 @@
 use iced::{Rectangle, Size};
 
 use crate::shared::design::{SpacingToken, TypeRole};
-use crate::workspace::workspace_dock::{Dock, Docks};
+use crate::workspace::workspace_dock::{Dock, DockVisibility, Docks};
 
 pub const SIDE_DOCK_WIDTH: f32 = 280.0;
 pub const BOTTOM_DOCK_HEIGHT: f32 = 200.0;
@@ -81,21 +81,23 @@ pub fn framed_inner(window_size: Size) -> Rectangle {
 }
 
 pub fn dock_horizontal_extent(dock: &Dock) -> f32 {
-    if dock.is_empty() {
+    if dock.is_empty() || dock.is_hidden() {
         0.0
-    } else if dock.open {
+    } else if dock.is_open() {
         SIDE_DOCK_WIDTH
     } else {
+        // Collapsed
         DOCK_RAIL_THICKNESS
     }
 }
 
 fn dock_bottom_extent(dock: &Dock) -> f32 {
-    if dock.is_empty() {
+    if dock.is_empty() || dock.is_hidden() {
         0.0
-    } else if dock.open {
+    } else if dock.is_open() {
         BOTTOM_DOCK_HEIGHT
     } else {
+        // Collapsed
         DOCK_RAIL_THICKNESS
     }
 }
