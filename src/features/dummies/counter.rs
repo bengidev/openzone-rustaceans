@@ -64,8 +64,8 @@ impl CounterPanel {
 }
 
 impl Panel for CounterPanel {
-    fn title(&self) -> String {
-        String::from("Counter")
+    fn title(&self) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed("Counter")
     }
 
     fn kind(&self) -> PanelKind {

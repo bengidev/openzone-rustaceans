@@ -24,7 +24,7 @@ use crate::workspace::workspace_drag::{
 use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_message::WorkspaceMessage;
 use crate::workspace::workspace_pane_state::PaneState;
-use crate::workspace::workspace_panel::{ErasedMessage, Panel, PanelKind};
+use crate::workspace::workspace_panel::{CloseRequest, ErasedMessage, Panel, PanelKind};
 use crate::workspace::workspace_stores::AppStores;
 
 /// Drop preview shown on a workspace window while a tab is dragged from
@@ -41,6 +41,13 @@ pub struct CrossWindowDropPreview {
 /// Each OS window owns one `Workspace` (pane tree, docks, focus). Domain
 /// data lives in app-root [`AppStores`], keyed by `window::Id` only at
 /// the daemon routing layer.
+#[derive(Debug, Clone)]
+pub struct CloseConfirmation {
+    pub location: PanelLocation,
+    pub tab: usize,
+    pub message: std::borrow::Cow<'static, str>,
+}
+
 pub struct Workspace {
     /// Iced's recursive split tree of panes (splits *between* panes).
     pub panes: pane_grid::State<PaneState>,
@@ -64,6 +71,8 @@ pub struct Workspace {
     torn_off_panel: Option<Box<dyn Panel>>,
     /// Factory for creating scratch panels as fallback when panes empty.
     scratch_factory: Option<fn() -> Box<dyn Panel>>,
+    /// Optional close confirmation when closing a dirty tab.
+    pub close_confirmation: Option<CloseConfirmation>,
 }
 
 /// Default workspace window size — matches `workspace_window_settings` in
@@ -95,6 +104,7 @@ impl Workspace {
             cross_window_drop_preview: None,
             torn_off_panel: None,
             scratch_factory: None,
+            close_confirmation: None,
         }
     }
 
@@ -122,6 +132,7 @@ impl Workspace {
             cross_window_drop_preview: None,
             torn_off_panel: None,
             scratch_factory: None,
+            close_confirmation: None,
         }
     }
 
@@ -287,7 +298,7 @@ impl Workspace {
     pub fn tab_title(&self, location: PanelLocation, tab: usize) -> Option<String> {
         self.pane_state(location)
             .and_then(|pane| pane.tabs.get(tab))
-            .map(|panel| panel.title())
+            .map(|panel| panel.title().into_owned())
     }
 
     /// Fold a workspace message into state. Single mutation path.
@@ -299,6 +310,24 @@ impl Workspace {
     /// reducer is the single writer of both layout state (via `&mut
     /// self`) and domain state (via `&mut AppStores`).
     pub fn update(&mut self, message: WorkspaceMessage, stores: &mut AppStores) {
+        if self.close_confirmation.is_some() {
+            match message {
+                WorkspaceMessage::ConfirmCloseDiscard { .. } => {
+                    if let Some(confirm) = self.close_confirmation.take() {
+                        self.close_tab_immediately(confirm.location, confirm.tab, stores);
+                    }
+                }
+                WorkspaceMessage::ConfirmCloseCancel => {
+                    self.close_confirmation = None;
+                }
+                WorkspaceMessage::WindowResized(size) => {
+                    self.window_size = size;
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match message {
             WorkspaceMessage::PaneClicked(pane) => {
                 self.focused = PanelLocation::Center(pane);
@@ -363,6 +392,13 @@ impl Workspace {
                 if let Some(drag) = self.drag_state.take() {
                     self.apply_drop(drag, stores);
                 }
+            }
+            WorkspaceMessage::ConfirmCloseDiscard { location, tab } => {
+                self.close_tab_immediately(location, tab, stores);
+                self.close_confirmation = None;
+            }
+            WorkspaceMessage::ConfirmCloseCancel => {
+                self.close_confirmation = None;
             }
         }
     }
@@ -509,14 +545,13 @@ impl Workspace {
 
         match location {
             PanelLocation::Center(pane) => {
-                if self.scratch_factory.is_some() {
-                    if let Some(ps) = self.panes.get_mut(pane) {
-                        let factory = self.scratch_factory.unwrap();
-                        ps.tabs.push(factory());
-                        ps.active = 0;
-                        self.focused = PanelLocation::Center(pane);
-                        return;
-                    }
+                if let Some(factory) = self.scratch_factory
+                    && let Some(ps) = self.panes.get_mut(pane)
+                {
+                    ps.tabs.push(factory());
+                    ps.active = 0;
+                    self.focused = PanelLocation::Center(pane);
+                    return;
                 }
                 if let Some((_, sibling)) = self.panes.close(pane) {
                     self.focused = PanelLocation::Center(sibling);
@@ -571,22 +606,46 @@ impl Workspace {
     /// collapses to a rail.
     fn close_active_tab(&mut self, stores: &mut AppStores) {
         let focused = self.focused;
-        let removed = self
-            .pane_state_mut(focused)
-            .and_then(|pane_state| pane_state.close_active());
+        let tab_index = self.pane_state(focused).map(|ps| ps.active);
+        let close_req = self
+            .pane_state(focused)
+            .and_then(|ps| ps.active_panel())
+            .map(|p| p.close_request());
+
+        if let Some(tab_idx) = tab_index
+            && let Some(CloseRequest::Confirm { message }) = close_req
+        {
+            self.close_confirmation = Some(CloseConfirmation {
+                location: focused,
+                tab: tab_idx,
+                message,
+            });
+            return;
+        }
+
+        if let Some(tab_idx) = tab_index {
+            self.close_tab_immediately(focused, tab_idx, stores);
+        }
+    }
+
+    /// Close a tab immediately, performing any required pane cleanup/collapsing.
+    pub fn close_tab_immediately(
+        &mut self,
+        location: PanelLocation,
+        tab: usize,
+        stores: &mut AppStores,
+    ) {
+        let removed = self.pane_state_mut(location).and_then(|p| p.close_tab(tab));
 
         let Some(mut panel) = removed else {
             return;
         };
 
-        // Release any store handle this panel held (e.g. a CounterId).
-        // Runs *before* we touch the split tree so even if pane collapse
-        // takes a different code path, the slot is always freed.
         panel.on_close(stores);
         drop(panel);
 
         let now_empty = self
-            .pane_state(focused)
+            .pane_state(location)
             .map(|pane_state| pane_state.is_empty())
             .unwrap_or(false);
 
@@ -594,16 +653,15 @@ impl Workspace {
             return;
         }
 
-        match focused {
+        match location {
             PanelLocation::Center(pane) => {
-                if self.scratch_factory.is_some() {
-                    if let Some(ps) = self.panes.get_mut(pane) {
-                        let factory = self.scratch_factory.unwrap();
-                        ps.tabs.push(factory());
-                        ps.active = 0;
-                        self.focused = PanelLocation::Center(pane);
-                        return;
-                    }
+                if let Some(factory) = self.scratch_factory
+                    && let Some(ps) = self.panes.get_mut(pane)
+                {
+                    ps.tabs.push(factory());
+                    ps.active = 0;
+                    self.focused = PanelLocation::Center(pane);
+                    return;
                 }
                 if let Some((_, sibling)) = self.panes.close(pane) {
                     self.focused = PanelLocation::Center(sibling);
@@ -1009,6 +1067,58 @@ mod tests {
     }
 
     #[test]
+    fn close_confirmation_blocks_underlying_workspace_messages() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+        workspace.close_confirmation = Some(CloseConfirmation {
+            location,
+            tab: 0,
+            message: std::borrow::Cow::Borrowed("Discard changes to untitled?"),
+        });
+
+        workspace.update(
+            WorkspaceMessage::TabSelected { location, tab: 1 },
+            &mut stores,
+        );
+        workspace.update(
+            WorkspaceMessage::Key(Chord::ch('w', Mods::CMD)),
+            &mut stores,
+        );
+
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center location");
+        };
+        let pane_state = workspace.panes.get(pane).unwrap();
+        assert_eq!(pane_state.active, 0);
+        assert_eq!(pane_state.len(), 2);
+        assert!(workspace.close_confirmation.is_some());
+    }
+
+    #[test]
+    fn discard_confirmation_closes_stored_tab_after_blocked_input() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+        workspace.close_confirmation = Some(CloseConfirmation {
+            location,
+            tab: 0,
+            message: std::borrow::Cow::Borrowed("Discard changes to untitled?"),
+        });
+
+        workspace.update(
+            WorkspaceMessage::ConfirmCloseDiscard { location, tab: 1 },
+            &mut stores,
+        );
+
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center location");
+        };
+        let pane_state = workspace.panes.get(pane).unwrap();
+        assert_eq!(pane_state.len(), 1);
+        assert_eq!(pane_state.tabs[0].title(), "Text");
+        assert!(workspace.close_confirmation.is_none());
+    }
+
+    #[test]
     fn clock_tick_updates_store_once_for_all_observers() {
         let mut stores = AppStores::new();
         let center = PaneState::new(vec![
@@ -1020,7 +1130,7 @@ mod tests {
             PaneState::new(vec![Box::new(ClockPanel::new())]),
             PaneState::empty(),
         );
-        let mut workspace = Workspace::with_docks(center, docks, ThemeMode::Dark);
+        let workspace = Workspace::with_docks(center, docks, ThemeMode::Dark);
 
         stores.clock.tick();
         stores.clock.tick();

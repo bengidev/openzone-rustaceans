@@ -79,6 +79,19 @@ impl PaneState {
         }
         removed
     }
+
+    /// Close a tab by index and return the panel that was removed, if any.
+    /// Clamps the active index so it remains valid.
+    pub fn close_tab(&mut self, index: usize) -> Option<Box<dyn Panel>> {
+        if index >= self.tabs.len() {
+            return None;
+        }
+        let removed = Some(self.tabs.remove(index));
+        if self.active >= self.tabs.len() && !self.tabs.is_empty() {
+            self.active = self.tabs.len() - 1;
+        }
+        removed
+    }
 }
 
 #[cfg(test)]

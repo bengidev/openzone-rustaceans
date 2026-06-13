@@ -71,10 +71,30 @@ pub enum PanelKind {
 /// app-root state, subscribes to *panel-local* external streams,
 /// identifies its kind, releases its store handle on close, and
 /// serializes a rehydration handle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CloseRequest {
+    Allowed,
+    Confirm {
+        message: std::borrow::Cow<'static, str>,
+    },
+}
+
+pub struct StatusSink<'a> {
+    segments: &'a mut Vec<std::borrow::Cow<'static, str>>,
+}
+
+impl<'a> StatusSink<'a> {
+    pub fn new(segments: &'a mut Vec<std::borrow::Cow<'static, str>>) -> Self {
+        Self { segments }
+    }
+    pub fn push(&mut self, segment: impl Into<std::borrow::Cow<'static, str>>) {
+        self.segments.push(segment.into());
+    }
+}
+
 pub trait Panel {
     /// Human-readable tab/title-bar label.
-    fn title(&self) -> String;
-
+    fn title(&self) -> std::borrow::Cow<'_, str>;
     /// Stable kind identity for the registry and persistence.
     fn kind(&self) -> PanelKind;
 
@@ -133,6 +153,15 @@ pub trait Panel {
     /// past the lifetime of its addressing panel. Default: no-op (panels
     /// without a per-instance handle, like Clock or Text, do nothing).
     fn on_close(&mut self, _stores: &mut AppStores) {}
+
+    // NEW METHODS:
+    fn is_dirty(&self) -> bool {
+        false
+    }
+    fn close_request(&self) -> CloseRequest {
+        CloseRequest::Allowed
+    }
+    fn status_contribution(&self, _sink: &mut StatusSink) {}
 }
 
 /// Erase a concrete panel message to [`ErasedMessage`].

@@ -47,8 +47,8 @@ impl Default for ClockPanel {
 }
 
 impl Panel for ClockPanel {
-    fn title(&self) -> String {
-        String::from("Clock")
+    fn title(&self) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed("Clock")
     }
 
     fn kind(&self) -> PanelKind {
