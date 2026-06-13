@@ -16,34 +16,34 @@
 
 #![allow(unused_imports)]
 
-pub mod command;
-pub mod dock;
-pub mod drag;
-pub mod layout_metrics;
-pub mod layout_store;
-pub mod location;
-pub mod message;
-pub mod pane_state;
-pub mod panel;
-pub mod persistence;
-pub mod registry;
-pub mod state;
-pub mod stores;
-pub mod view;
+pub mod workspace_command;
+pub mod workspace_dock;
+pub mod workspace_drag;
+pub mod workspace_layout_metrics;
+pub mod workspace_layout_store;
+pub mod workspace_location;
+pub mod workspace_message;
+pub mod workspace_pane_state;
+pub mod workspace_panel;
+pub mod workspace_persistence;
+pub mod workspace_registry;
+pub mod workspace_state;
+pub mod workspace_stores;
+pub mod workspace_view;
 
-pub use command::{Chord, Command, KeyRef, Keymap, Mods, chord_from_keyboard_event};
-pub use dock::{Dock, Docks};
-pub use drag::{Direction, DragState, DropTarget, SplitPaneTarget, TabStripTarget};
 use iced::{Subscription, Task, Theme, window};
-pub use layout_store::{FileLayoutStore, LayoutStore, LayoutStoreError};
-pub use location::{DockSide, PanelLocation};
-pub use message::WorkspaceMessage;
-pub use pane_state::PaneState;
-pub use panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
-pub use persistence::{LayoutSnapshot, capture, restore};
-pub use registry::{PanelConstructor, PanelRegistry};
-pub use state::{CrossWindowDropPreview, Workspace};
-pub use stores::{AppStores, ClockStore, CounterId, CounterStore};
+pub use workspace_command::{Chord, Command, KeyRef, Keymap, Mods, chord_from_keyboard_event};
+pub use workspace_dock::{Dock, Docks};
+pub use workspace_drag::{Direction, DragState, DropTarget, SplitPaneTarget, TabStripTarget};
+pub use workspace_layout_store::{FileLayoutStore, LayoutStore, LayoutStoreError};
+pub use workspace_location::{DockSide, PanelLocation};
+pub use workspace_message::WorkspaceMessage;
+pub use workspace_pane_state::PaneState;
+pub use workspace_panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
+pub use workspace_persistence::{LayoutSnapshot, capture, restore};
+pub use workspace_registry::{PanelConstructor, PanelRegistry};
+pub use workspace_state::{CrossWindowDropPreview, Workspace};
+pub use workspace_stores::{AppStores, ClockStore, CounterId, CounterStore};
 
 use crate::shared::design::ThemeMode;
 
@@ -106,7 +106,7 @@ impl WorkspaceApp {
     }
 
     fn view(&self) -> iced::Element<'_, WorkspaceMessage> {
-        view::view(&self.workspace, &self.stores)
+        workspace_view::view(&self.workspace, &self.stores)
     }
 
     fn subscription(&self) -> Subscription<WorkspaceMessage> {
@@ -117,7 +117,7 @@ impl WorkspaceApp {
             window::resize_events().map(|(_, size)| WorkspaceMessage::WindowResized(size)),
         ];
         if self.workspace.is_tab_drag_active() {
-            streams.push(crate::workspace::state::tab_drag_subscription());
+            streams.push(crate::workspace::workspace_state::tab_drag_subscription());
         }
         if self.workspace.has_clock_panel() {
             streams.push(

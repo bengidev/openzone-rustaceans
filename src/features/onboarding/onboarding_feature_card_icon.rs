@@ -11,9 +11,9 @@ use iced::Theme;
 use iced::mouse;
 use iced::widget::canvas::{Frame, Geometry, Path, Program, Stroke};
 
-use crate::features::onboarding::application::feature_card_dynamics::accent_pulse;
+use super::onboarding_feature_card_dynamics::accent_pulse;
 use crate::shared::design::OpenZoneTheme;
-use crate::shared::design::tokens::ForegroundToken;
+use crate::shared::design::design_tokens::ForegroundToken;
 
 const DESIGN_SIZE: f32 = 120.0;
 

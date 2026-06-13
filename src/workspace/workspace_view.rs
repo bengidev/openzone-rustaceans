@@ -20,16 +20,16 @@ use crate::shared::design::{
     BackgroundToken, BorderToken, ForegroundToken, OpenZoneTheme, RadiusToken, SpacingToken,
     ThemeMode, TypeRole,
 };
-use crate::workspace::dock::Dock;
-use crate::workspace::drag;
-use crate::workspace::layout_metrics::{
-    self, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, SIDE_DOCK_WIDTH,
+use crate::workspace::workspace_dock::Dock;
+use crate::workspace::workspace_drag as drag;
+use crate::workspace::workspace_layout_metrics::{
+    self as layout_metrics, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, SIDE_DOCK_WIDTH,
 };
-use crate::workspace::location::{DockSide, PanelLocation};
-use crate::workspace::message::WorkspaceMessage;
-use crate::workspace::pane_state::PaneState;
-use crate::workspace::state::Workspace;
-use crate::workspace::stores::AppStores;
+use crate::workspace::workspace_location::{DockSide, PanelLocation};
+use crate::workspace::workspace_message::WorkspaceMessage;
+use crate::workspace::workspace_pane_state::PaneState;
+use crate::workspace::workspace_state::Workspace;
+use crate::workspace::workspace_stores::AppStores;
 
 /// Render the whole workspace shell as a view over `stores`.
 ///

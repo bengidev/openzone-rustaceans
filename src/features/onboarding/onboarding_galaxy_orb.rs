@@ -18,7 +18,7 @@ use iced::widget::canvas::{Frame, Geometry, Program};
 use crate::shared::design::OpenZoneTheme;
 use crate::shared::design::ThemeMode;
 
-use crate::features::onboarding::application::onboarding_dynamics::{MAX_ZOOM, SPEED_CLAMP};
+use super::onboarding_dynamics::{MAX_ZOOM, SPEED_CLAMP};
 
 const LOGICAL_SIZE: Size = Size {
     width: 520.0,

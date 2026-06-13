@@ -8,9 +8,9 @@
 //! Raw key chords and resolved commands flow through the same enum so
 //! key routing and command dispatch share the single reducer.
 
-use crate::workspace::command::{Chord, Command};
-use crate::workspace::location::PanelLocation;
-use crate::workspace::panel::ErasedMessage;
+use crate::workspace::workspace_command::{Chord, Command};
+use crate::workspace::workspace_location::PanelLocation;
+use crate::workspace::workspace_panel::ErasedMessage;
 use iced::widget::pane_grid;
 use iced::{Point, Size};
 
@@ -48,7 +48,7 @@ pub enum WorkspaceMessage {
     ///
     /// The workspace gates a 1 Hz timer on whether any Clock panel
     /// exists in the layout. Each tick is folded into
-    /// [`crate::workspace::stores::ClockStore::tick`] exactly once, and
+    /// [`crate::workspace::workspace_stores::ClockStore::tick`] exactly once, and
     /// every Clock panel re-renders against the new value (single-source
     /// fan-out). Removing the last Clock tab also removes the gating
     /// reason for the subscription, so Iced stops it without orphan

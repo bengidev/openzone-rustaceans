@@ -9,14 +9,14 @@ use iced::widget::pane_grid;
 use iced::window;
 use iced::{Point, Rectangle, Size};
 
-use crate::workspace::dock::Docks;
-use crate::workspace::layout_metrics::{
+use crate::workspace::workspace_dock::Docks;
+use crate::workspace::workspace_layout_metrics::{
     self, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, MAIN_AXIS_SPACING, PANE_GRID_SPACING,
     SIDE_DOCK_WIDTH, dock_horizontal_extent, estimated_tab_width, tab_chip_spacing,
     tab_strip_height, tab_strip_padding,
 };
-use crate::workspace::location::{DockSide, PanelLocation};
-use crate::workspace::pane_state::PaneState;
+use crate::workspace::workspace_location::{DockSide, PanelLocation};
+use crate::workspace::workspace_pane_state::PaneState;
 
 /// Direction for edge-split drops.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -183,8 +183,9 @@ pub fn compute_pane_bounds(
 
 /// Compute dock positions (rails and open bodies) from window size and dock state.
 pub fn compute_dock_regions(docks: &Docks, window_size: Size) -> DockRegions {
-    let inner = layout_metrics::framed_inner(window_size);
-    let (main_row_height, bottom_occ) = layout_metrics::main_row_layout(docks, window_size);
+    let inner = workspace_layout_metrics::framed_inner(window_size);
+    let (main_row_height, bottom_occ) =
+        workspace_layout_metrics::main_row_layout(docks, window_size);
     let main_row_y = inner.y;
     let bottom_y = inner.y
         + main_row_height
@@ -621,7 +622,7 @@ fn split_preview_rect(pb: &PaneBounds, direction: Direction) -> Rectangle {
 
 /// Compute the grid area from window size and dock state.
 pub fn compute_grid_bounds(docks: &Docks, window_size: Size) -> Rectangle {
-    layout_metrics::compute_grid_bounds(docks, window_size)
+    workspace_layout_metrics::compute_grid_bounds(docks, window_size)
 }
 
 /// Per-window geometry bundle for cross-window drop hit-testing.
@@ -658,7 +659,7 @@ pub fn resolve_drop_target_in_geometry(
 /// When no window contains the cursor, returns `(None, DropTarget::None)`.
 ///
 /// Production routing resolves against the event window only (see
-/// [`crate::workspace::state::Workspace::resolve_drop_at`]); this helper exists
+/// [`crate::workspace::workspace_state::Workspace::resolve_drop_at`]); this helper exists
 /// for pure geometry tests with synthetic window layouts.
 pub fn pick_cross_window_drop_target(
     cursor: Point,
@@ -679,7 +680,7 @@ pub fn pick_cross_window_drop_target(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::pane_state::PaneState;
+    use crate::workspace::workspace_pane_state::PaneState;
 
     fn single_pane_grid() -> (pane_grid::State<PaneState>, pane_grid::Pane) {
         pane_grid::State::new(PaneState::empty())

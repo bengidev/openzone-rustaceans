@@ -14,8 +14,8 @@
 
 use std::collections::HashMap;
 
-use crate::workspace::panel::{Panel, PanelKind};
-use crate::workspace::stores::AppStores;
+use crate::workspace::workspace_panel::{Panel, PanelKind};
+use crate::workspace::workspace_stores::AppStores;
 
 /// Rebuilds a panel of a known kind from a persisted snapshot handle.
 ///

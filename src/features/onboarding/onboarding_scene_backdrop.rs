@@ -12,7 +12,7 @@ use iced::mouse;
 use iced::widget::canvas::{Frame, Geometry, Program};
 
 use crate::shared::design::OpenZoneTheme;
-use crate::shared::design::tokens::ForegroundToken;
+use crate::shared::design::design_tokens::ForegroundToken;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SceneBackdrop {

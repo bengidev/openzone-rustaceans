@@ -9,8 +9,8 @@
 //! body and shows a minimal rail; reopening restores the prior tabs and
 //! active selection.
 
-use crate::workspace::location::DockSide;
-use crate::workspace::pane_state::PaneState;
+use crate::workspace::workspace_location::DockSide;
+use crate::workspace::workspace_pane_state::PaneState;
 
 /// One edge dock: a tab stack plus its open/collapsed state.
 pub struct Dock {
@@ -113,7 +113,7 @@ impl Docks {
 mod tests {
     use super::*;
     use crate::features::dummies::TextPanel;
-    use crate::workspace::panel::Panel;
+    use crate::workspace::workspace_panel::Panel;
 
     fn one_tab() -> PaneState {
         let tabs: Vec<Box<dyn Panel>> = vec![Box::new(TextPanel::new())];

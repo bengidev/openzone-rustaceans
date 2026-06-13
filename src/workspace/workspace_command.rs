@@ -9,7 +9,7 @@
 //! workspace-level actions — keybindings, menu items, and (later)
 //! command-palette entries all resolve to the same enum.
 
-use crate::workspace::location::DockSide;
+use crate::workspace::workspace_location::DockSide;
 
 /// A workspace-level action.
 ///
@@ -214,6 +214,7 @@ impl Default for Keymap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::workspace_location::DockSide;
 
     #[test]
     fn bind_then_resolve_returns_command() {
