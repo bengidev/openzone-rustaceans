@@ -4,136 +4,104 @@ The **workspace shell** is the cross-cutting UI composition layer that future
 assistant features (AI chat, sessions, editor, terminal) plug into. It is a
 distinct **bounded context** — the *UI shell* — not a domain feature.
 
-## What this context owns
+The shell does not name any concrete feature type. It addresses panels only
+through the `Panel` trait and `PanelKind`. The composition root (`main.rs`)
+is the one place that knows concrete panels: it registers their constructors,
+wires their stores, and builds the initial layout.
 
-- The **layout engine**: an outer frame of `column[title_bar, center, status_bar]`
-  where the center is Iced's built-in `pane_grid` (recursive split tree between
-  panes). Tab stacks live *within* each pane, separate from the split tree.
-- The **`Panel` port**: the stable, final trait every panel implements.
-- The **panel registry**: a `PanelKind -> constructor` table wired at the
-  composition root. The composition seam for persistence rehydrate and (later)
-  dynamic panel open / plugins.
-- **Focus**: a single, centrally-owned `focused: PanelLocation`, kept in sync
-  with the pane grid's own click focus. Chrome (active-pane border, active-tab
-  highlight) is a pure read of this focus.
-- **Subscription batching**: the workspace aggregates every live panel's
-  *panel-local* `subscription()` into one stream via `Subscription::batch`,
-  plus a single workspace-level Clock tick gated on whether any Clock panel
-  exists. Iced starts/stops each as panels appear and drop.
-- The **app-root stores port**: `AppStores { counter: CounterStore, clock: ClockStore }`
-  is *defined* here but *owned* at app root (`OpenZone` in `main.rs`). The
-  workspace borrows `&mut AppStores` through its `update`; panels are views
-  over store handles.
+## Glossary
 
-## Layout vocabulary
+- **Workspace layout model** — a deterministic 2D shell. No persistent freeform
+  spatial canvas, panel rotation, or Z-depth. Visual depth may signal
+  hierarchy, elevation, or drag feedback, but panels do not have freeform
+  position or rotation.
 
-- **Pane** — a leaf of the center `pane_grid`. Splits happen *between* panes.
-- **PaneState** — a pane's tab stack: `{ tabs: Vec<Box<dyn Panel>>, active }`.
-  Tabs happen *within* a pane. Docks reuse this same type.
-- **PanelLocation** — addresses any panel unambiguously: `Center(pane_grid::Pane)`
-  or `Dock(DockSide)`.
-- **Tab strip** — the clickable row of tab labels at the top of each pane;
-  the active tab is highlighted via the `Accent` foreground token.
+- **Workbench** — the center-only work area where the user performs the
+  primary task. The Workbench is the only split region. Open docks frame the
+  Workbench but are not part of it. The Workbench must never be empty in
+  user-visible state.
 
-## The `Panel` port contract (final)
+- **Activity Dock** — the left edge dock for tabbed navigation and context
+  surfaces, such as project navigation, session lists, or workspace-level
+  activity views.
 
-```text
-title()                  -> String                       human-readable label
-kind()                   -> PanelKind                    stable identity
-view(&stores)            -> Element<ErasedMessage>       view-over-handle render
-update(msg, &mut stores) -> ()                           fold intent; mutate self or store
-subscription()           -> Subscription<ErasedMessage>  panel-local stream (default none)
-snapshot(&stores)        -> serde_json::Value            handle-only persistence
-on_close(&mut stores)    -> ()                           release any store slot (default none)
-```
+- **Conversation Dock** — the right edge dock for assistant conversation and
+  prompt entry. Conversation Surfaces default here but can be moved like any
+  other panel.
 
-### View-over-handle
+- **Output Dock** — the bottom edge dock for terminal, logs, diagnostics, or
+  other transient output. User-invoked output opens the dock; passive output
+  badges it without stealing focus.
 
-Counter and Clock panels do **not** own domain data. A `CounterPanel` carries
-only a `CounterId`; a `ClockPanel` carries no per-instance state. Both read
-their canonical value from `AppStores` on every render. `view`, `update`,
-`snapshot`, and `on_close` all see the same store reference, so a frame is
-internally consistent with no caching layer in the panel.
+- **Dock visibility** — a tri-state: Hidden, Collapsed, or Open. Hidden docks
+  render neither rail nor body and consume no layout space. Collapsed docks
+  render a visible rail only. Open docks render their body. All three states
+  retain the dock's tab stack. Hidden docks are revealed from status-bar
+  layout controls or workspace commands. Closing an open dock hides it.
+  Collapsing an open dock is a distinct action that leaves the rail visible
+  for quick access. Opening a hidden or collapsed dock shows its body.
+  Explicitly opening a dock focuses it when it has interactive content.
+  Hiding the focused dock returns focus to the last focused Workbench pane.
 
-### Intent lifting
+- **Dock extent** — the remembered visible width of a side dock or height of
+  the Output Dock. Each dock keeps its own extent so reopening it restores the
+  user's last chosen size. Extents are persisted with layout state.
 
-Panel messages are *intents* (`CounterMessage::Increment`, etc.) erased at the
-trait boundary. The workspace reducer is the **single writer** of both layout
-state (via `&mut self`) and domain state (via `&mut AppStores`):
+- **Startup layout** — the default first-open layout: all edge docks are
+  hidden, and the focused Workbench fills the window with one clean Scratch
+  Pane.
 
-1. A `WorkspaceMessage::Panel { location, tab, message }` arrives.
-2. The reducer addresses the live panel and calls `panel.update(message, &mut stores)`.
-3. The panel downcasts to its concrete intent and folds it — onto `self` for
-   panel-local UI state, onto `stores` for domain state. There is **no
-   interior mutability** anywhere; the whole path is `&mut`.
+- **Pane** — a leaf of the Workbench split tree. Splits happen between panes.
 
-### Single store-level Clock subscription
+- **PaneState** — a pane's tab stack: an ordered list of tabs and the index of
+  the active tab. Docks reuse this same type.
 
-The 1 Hz clock tick lives at the workspace layer, not on `ClockPanel`. The
-workspace's `subscription` checks `has_clock_panel()` and, if any Clock panel
-exists in the layout, batches in `iced::time::every(1s).map(|_| ClockTick)`.
-Each `ClockTick` folds into one `ClockStore::tick()`; every Clock panel
-re-renders against the same value (single-source fan-out). Removing the last
-Clock tab also removes the gating reason for the subscription, so Iced stops
-it without orphan streams.
+- **PanelLocation** — addresses any panel unambiguously: either a Workbench
+  pane or a named edge dock.
 
-### Message erasure
+- **Tab strip** — the clickable row of tab labels at the top of each pane or
+  dock body. The active tab is highlighted via accent foreground or underline.
 
-`dyn Panel` cannot carry an associated message type and stay object-safe, so
-every panel **erases** its concrete message to `ErasedMessage`
-(`Arc<dyn Any + Send + Sync>`).
+- **Status Contribution** — status-bar segments supplied by the focused panel,
+  such as cursor position, language mode, diagnostics, or task state. The
+  shell owns the status bar layout; panels push segments into a shell-owned
+  status sink and do not render the bar. Panels may cache dynamic labels so
+  unchanged status does not allocate every frame.
 
-- `Arc`, not `Box`: Iced widgets (`button`, `text_input`) require the
-  application message to be `Clone`; `Box<dyn Any>` is not `Clone`.
-- `Send + Sync` is mandatory — Iced `Task`s and `Subscription`s run on tokio.
-- Each panel downcasts at its own boundary and `debug_assert!`s on a failed
-  downcast: misrouting is loud in development, a silent no-op in release.
+- **Default Dock Surface** — the first surface created for an empty dock when
+  the user explicitly opens it. Default dock surfaces are lazy-created by
+  per-dock factories supplied from the composition root; the workspace shell
+  does not name concrete surface types.
 
-The workspace routes all panel messages through one path, so the panel that
-produced a message receives it back. A stale tag (panel since removed) is a
-no-op, never a panic.
+- **Command Center** — the persistent command/search trigger in the title bar,
+  labelled `Search commands`. It is workspace chrome, not a panel or overlay.
+  Activating it opens a transient command palette overlay scoped to the
+  workspace. The workspace shell owns the palette's open/query UI state;
+  command providers are supplied by the composition root. The palette shortcut
+  is Cmd/Ctrl+Shift+P.
 
-## Dependency rule
+- **Persistence Handle** — an optional panel-provided handle used to rehydrate
+  durable layout entries. Panels without a persistence handle are omitted from
+  layout snapshots; the composition root restores required fallback surfaces
+  when the Workbench would otherwise be empty.
 
-```text
-features/<panel>  ──►  workspace   (to implement the Panel trait)
-workspace         ──✗  a concrete feature   (never)
-```
+- **Scratch Pane** — an editable, unsaved, non-domain plain-text work surface
+  shown in the Workbench when no file, session, or project-specific panel has
+  been chosen. Its first implementation is a line-oriented input, not a full
+  text editor. It is ephemeral until saved or promoted by a feature; otherwise
+  it is a fallback for first-open or invalid/empty Workbench restore, not
+  durable content. Its user-facing tab label is `untitled`. Closing a dirty
+  Scratch Pane warns rather than silently persisting or discarding its text.
+  The composition root provides this fallback panel; the workspace shell does
+  not name or construct a concrete Scratch Pane type.
 
-The shell addresses panels only through the `Panel` trait and `PanelKind`. It
-never names a concrete feature type. `main.rs` is the one place that knows
-concrete panels: it registers their constructors and builds the initial layout.
+- **Close Request** — a panel's response when the workspace asks whether it
+  may be closed. Clean panels allow close immediately; dirty panels request
+  user confirmation before the workspace removes them. The workspace shell
+  owns the confirmation overlay; panels only provide the close reason and a
+  copy-on-write confirmation message.
 
-## Layout invariants
-
-1. Exactly one `PanelLocation` is focused per window. `TabSelected` and
-   `PaneClicked` both update it; chrome reads it.
-2. Tab selection is range-checked — a stale index can never point `active` at a
-   missing tab.
-3. The center is the *only* resizable split region. The title bar and status
-   bar are fixed chrome.
-4. Subscription identity folds in the panel's location + tab so two panels of
-   the same kind don't collapse into one stream.
-5. Snapshots store **handles**, not content (a counter's value, a file path —
-   never a file's bytes).
-
-## Why the shell is not layered like a feature
-
-Domain features follow `domain / application / infrastructure / presenter`. The
-shell has **no business rules** — it is composition. Forcing the layered shape
-would create contrived empty layers, so the shell is a flat top-level module.
-
-## Build spine status
-
-All **6 of 6** slices are landed (#11–#16, parent epic #10):
-
-1. Single-window shell with three dummies
-2. Edge docks + commands + panel-first key routing
-3. Handle-only layout persistence with the `PanelRegistry` rehydrate path
-4. App-root stores + intent lifting + a single store-level Clock subscription
-5. Multi-window daemon with shared store fan-out
-6. Custom tab drag-and-drop (reorder, edge-split, dock drop, tear-off to new window)
-
-Cross-window tab drop into an **existing** window is a follow-up (#25; tear-off
-to a new window is shipped). No real feature enters until the shell is proven
-with the three dummies.
+- **Conversation Surface** — one assistant conversation hosted as a tab whose
+  default home is the Conversation Dock. The dock is only the default
+  container; the surface may move to the Workbench or another dock like any
+  other panel.
