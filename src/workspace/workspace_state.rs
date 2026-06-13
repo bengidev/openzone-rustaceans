@@ -527,14 +527,13 @@ impl Workspace {
 
         match location {
             PanelLocation::Center(pane) => {
-                if self.scratch_factory.is_some() {
-                    if let Some(ps) = self.panes.get_mut(pane) {
-                        let factory = self.scratch_factory.unwrap();
-                        ps.tabs.push(factory());
-                        ps.active = 0;
-                        self.focused = PanelLocation::Center(pane);
-                        return;
-                    }
+                if let Some(factory) = self.scratch_factory
+                    && let Some(ps) = self.panes.get_mut(pane)
+                {
+                    ps.tabs.push(factory());
+                    ps.active = 0;
+                    self.focused = PanelLocation::Center(pane);
+                    return;
                 }
                 if let Some((_, sibling)) = self.panes.close(pane) {
                     self.focused = PanelLocation::Center(sibling);
@@ -595,15 +594,15 @@ impl Workspace {
             .and_then(|ps| ps.active_panel())
             .map(|p| p.close_request());
 
-        if let Some(tab_idx) = tab_index {
-            if let Some(CloseRequest::Confirm { message }) = close_req {
-                self.close_confirmation = Some(CloseConfirmation {
-                    location: focused,
-                    tab: tab_idx,
-                    message,
-                });
-                return;
-            }
+        if let Some(tab_idx) = tab_index
+            && let Some(CloseRequest::Confirm { message }) = close_req
+        {
+            self.close_confirmation = Some(CloseConfirmation {
+                location: focused,
+                tab: tab_idx,
+                message,
+            });
+            return;
         }
 
         if let Some(tab_idx) = tab_index {
@@ -638,14 +637,13 @@ impl Workspace {
 
         match location {
             PanelLocation::Center(pane) => {
-                if self.scratch_factory.is_some() {
-                    if let Some(ps) = self.panes.get_mut(pane) {
-                        let factory = self.scratch_factory.unwrap();
-                        ps.tabs.push(factory());
-                        ps.active = 0;
-                        self.focused = PanelLocation::Center(pane);
-                        return;
-                    }
+                if let Some(factory) = self.scratch_factory
+                    && let Some(ps) = self.panes.get_mut(pane)
+                {
+                    ps.tabs.push(factory());
+                    ps.active = 0;
+                    self.focused = PanelLocation::Center(pane);
+                    return;
                 }
                 if let Some((_, sibling)) = self.panes.close(pane) {
                     self.focused = PanelLocation::Center(sibling);
