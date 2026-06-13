@@ -31,8 +31,8 @@ pub mod workspace_state;
 pub mod workspace_stores;
 pub mod workspace_view;
 
-use iced::{window, Subscription, Task, Theme};
-pub use workspace_command::{chord_from_keyboard_event, Chord, Command, KeyRef, Keymap, Mods};
+use iced::{Subscription, Task, Theme, window};
+pub use workspace_command::{Chord, Command, KeyRef, Keymap, Mods, chord_from_keyboard_event};
 pub use workspace_dock::{Dock, DockVisibility, Docks};
 pub use workspace_drag::{Direction, DragState, DropTarget, SplitPaneTarget, TabStripTarget};
 pub use workspace_layout_store::{FileLayoutStore, LayoutStore, LayoutStoreError};
@@ -40,9 +40,9 @@ pub use workspace_location::{DockSide, PanelLocation};
 pub use workspace_message::WorkspaceMessage;
 pub use workspace_pane_state::PaneState;
 pub use workspace_panel::{
-    downcast, erase, CloseRequest, ErasedMessage, Panel, PanelKind, StatusSink,
+    CloseRequest, ErasedMessage, Panel, PanelKind, StatusSink, downcast, erase,
 };
-pub use workspace_persistence::{capture, restore, LayoutSnapshot};
+pub use workspace_persistence::{LayoutSnapshot, capture, restore};
 pub use workspace_registry::{PanelConstructor, PanelRegistry};
 pub use workspace_state::{CrossWindowDropPreview, Workspace};
 pub use workspace_stores::AppStores;
