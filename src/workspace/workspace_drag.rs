@@ -9,7 +9,7 @@ use iced::widget::pane_grid;
 use iced::window;
 use iced::{Point, Rectangle, Size};
 
-use crate::workspace::workspace_dock::Docks;
+use crate::workspace::workspace_dock::{DockVisibility, Docks};
 use crate::workspace::workspace_layout_metrics::{
     self, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, MAIN_AXIS_SPACING, PANE_GRID_SPACING,
     SIDE_DOCK_WIDTH, dock_horizontal_extent, estimated_tab_width, tab_chip_spacing,
@@ -220,40 +220,43 @@ pub fn compute_dock_regions(docks: &Docks, window_size: Size) -> DockRegions {
         })
     .max(0.0);
 
-    let left_rail = if !docks.left.open && !docks.left.tabs.is_empty() {
-        Rectangle {
-            x: inner.x,
-            y: main_row_y,
-            width: DOCK_RAIL_THICKNESS,
-            height: main_row_height,
-        }
-    } else {
-        Rectangle::default()
-    };
+    let left_rail =
+        if docks.left.visibility == DockVisibility::Collapsed && !docks.left.tabs.is_empty() {
+            Rectangle {
+                x: inner.x,
+                y: main_row_y,
+                width: DOCK_RAIL_THICKNESS,
+                height: main_row_height,
+            }
+        } else {
+            Rectangle::default()
+        };
 
-    let right_rail = if !docks.right.open && !docks.right.tabs.is_empty() {
-        Rectangle {
-            x: inner.x + inner.width - DOCK_RAIL_THICKNESS,
-            y: main_row_y,
-            width: DOCK_RAIL_THICKNESS,
-            height: main_row_height,
-        }
-    } else {
-        Rectangle::default()
-    };
+    let right_rail =
+        if docks.right.visibility == DockVisibility::Collapsed && !docks.right.tabs.is_empty() {
+            Rectangle {
+                x: inner.x + inner.width - DOCK_RAIL_THICKNESS,
+                y: main_row_y,
+                width: DOCK_RAIL_THICKNESS,
+                height: main_row_height,
+            }
+        } else {
+            Rectangle::default()
+        };
 
-    let bottom_rail = if !docks.bottom.open && !docks.bottom.tabs.is_empty() {
-        Rectangle {
-            x: center_x,
-            y: bottom_y,
-            width: center_width,
-            height: DOCK_RAIL_THICKNESS,
-        }
-    } else {
-        Rectangle::default()
-    };
+    let bottom_rail =
+        if docks.bottom.visibility == DockVisibility::Collapsed && !docks.bottom.tabs.is_empty() {
+            Rectangle {
+                x: center_x,
+                y: bottom_y,
+                width: center_width,
+                height: DOCK_RAIL_THICKNESS,
+            }
+        } else {
+            Rectangle::default()
+        };
 
-    let left_body = if docks.left.open {
+    let left_body = if docks.left.visibility == DockVisibility::Open {
         Rectangle {
             x: inner.x,
             y: main_row_y,
@@ -264,7 +267,7 @@ pub fn compute_dock_regions(docks: &Docks, window_size: Size) -> DockRegions {
         Rectangle::default()
     };
 
-    let right_body = if docks.right.open {
+    let right_body = if docks.right.visibility == DockVisibility::Open {
         Rectangle {
             x: inner.x + inner.width - SIDE_DOCK_WIDTH,
             y: main_row_y,
@@ -275,7 +278,7 @@ pub fn compute_dock_regions(docks: &Docks, window_size: Size) -> DockRegions {
         Rectangle::default()
     };
 
-    let bottom_body = if docks.bottom.open {
+    let bottom_body = if docks.bottom.visibility == DockVisibility::Open {
         Rectangle {
             x: center_x,
             y: bottom_y,
@@ -913,7 +916,7 @@ mod tests {
             PaneState::empty(),
             PaneState::empty(),
         );
-        docks.left.open = true;
+        docks.left.visibility = DockVisibility::Open;
         let window_size = Size::new(800.0, 600.0);
         let grid = compute_grid_bounds(&docks, window_size);
         let pane_bounds = compute_pane_bounds(&panes, grid);
@@ -954,7 +957,7 @@ mod tests {
             PaneState::empty(),
             PaneState::empty(),
         );
-        docks_b.left.open = true;
+        docks_b.left.visibility = DockVisibility::Open;
         let hit_windows = [(id_a, geom_a, docks_a), (id_b, geom_b, docks_b)];
         let (window_id, target) = pick_cross_window_drop_target(cursor, &hit_windows, None);
 
@@ -987,7 +990,7 @@ mod tests {
             PaneState::empty(),
             PaneState::empty(),
         );
-        docks_b.left.open = true;
+        docks_b.left.visibility = DockVisibility::Open;
         let (window_id, target) =
             pick_cross_window_drop_target(cursor, &[(id_b, geom_b, docks_b)], None);
 

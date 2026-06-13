@@ -32,6 +32,8 @@ use crate::features::onboarding::{
     view as onboarding_view,
 };
 use crate::shared::design::ThemeMode;
+#[cfg(test)]
+use crate::workspace::DockVisibility;
 use crate::workspace::workspace_state::tab_drag_subscription;
 use crate::workspace::{
     AppStores, Chord, CrossWindowDropPreview, DragState, DropTarget, FileLayoutStore, LayoutStore,
@@ -847,7 +849,7 @@ mod cross_window_tab_drop_tests {
         {
             let workspace_b = app.workspaces.get_mut(&window_b).unwrap();
             workspace_b.docks.left.tabs = PaneState::new(vec![Box::new(TextPanel::new())]);
-            workspace_b.docks.left.open = true;
+            workspace_b.docks.left.visibility = DockVisibility::Open;
         }
         let source_location = center_location(&app.workspaces[&window_a]);
         app.workspaces.get_mut(&window_a).unwrap().update(

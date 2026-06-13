@@ -16,7 +16,7 @@ use iced::{Point, Size, Subscription};
 
 use crate::shared::design::{OpenZoneTheme, ThemeMode};
 use crate::workspace::workspace_command::{Chord, Command, Keymap};
-use crate::workspace::workspace_dock::Docks;
+use crate::workspace::workspace_dock::{DockVisibility, Docks};
 use crate::workspace::workspace_drag::{
     Direction, DockRegions, DragState, DropTarget, PaneBounds, SplitPaneTarget, TabStripTarget,
     WindowDropGeometry, resolve_drop_target_in_geometry,
@@ -334,6 +334,12 @@ impl Workspace {
             }
             WorkspaceMessage::DockFocused(location) => {
                 self.focused = location;
+                if let PanelLocation::Dock(side) = location {
+                    let dock = self.docks.get(side);
+                    if dock.is_collapsed() && !dock.is_empty() {
+                        self.docks.set_visibility(side, DockVisibility::Open);
+                    }
+                }
             }
             WorkspaceMessage::TabSelected { location, tab } => {
                 self.focused = location;
@@ -399,6 +405,15 @@ impl Workspace {
             }
             WorkspaceMessage::ConfirmCloseCancel => {
                 self.close_confirmation = None;
+            }
+            WorkspaceMessage::DockVisibilityChanged { side, visibility } => {
+                let was_focused = self.focused == PanelLocation::Dock(side);
+                self.docks.set_visibility(side, visibility);
+                if visibility == DockVisibility::Open && !self.docks.get(side).is_empty() {
+                    self.focused = PanelLocation::Dock(side);
+                } else if was_focused && visibility != DockVisibility::Open {
+                    self.return_focus_to_workbench();
+                }
             }
         }
     }
@@ -507,7 +522,7 @@ impl Workspace {
                 let dock = self.docks.get_mut(side);
                 dock.tabs.tabs.push(panel);
                 dock.tabs.active = dock.tabs.tabs.len() - 1;
-                dock.open = true;
+                dock.visibility = DockVisibility::Open;
                 self.focused = PanelLocation::Dock(side);
                 None
             }
@@ -558,7 +573,7 @@ impl Workspace {
                 }
             }
             PanelLocation::Dock(side) => {
-                self.docks.get_mut(side).open = false;
+                self.docks.get_mut(side).visibility = DockVisibility::Hidden;
             }
         }
     }
@@ -581,10 +596,24 @@ impl Workspace {
     /// Execute a workspace command.
     pub fn apply_command(&mut self, command: Command, stores: &mut AppStores) {
         match command {
-            Command::ToggleDock(side) => {
-                let opened = self.docks.toggle(side);
-                if opened {
+            Command::OpenDock(side) => {
+                self.docks.set_visibility(side, DockVisibility::Open);
+                if !self.docks.get(side).is_empty() {
                     self.focused = PanelLocation::Dock(side);
+                }
+            }
+            Command::CollapseDock(side) => {
+                let was_focused = self.focused == PanelLocation::Dock(side);
+                self.docks.set_visibility(side, DockVisibility::Collapsed);
+                if was_focused {
+                    self.return_focus_to_workbench();
+                }
+            }
+            Command::HideDock(side) => {
+                let was_focused = self.focused == PanelLocation::Dock(side);
+                self.docks.set_visibility(side, DockVisibility::Hidden);
+                if was_focused {
+                    self.return_focus_to_workbench();
                 }
             }
             Command::SplitFocused => {
@@ -596,6 +625,14 @@ impl Workspace {
                 }
             }
             Command::CloseActiveTab => self.close_active_tab(stores),
+        }
+    }
+
+    /// Return focus to the last Workbench pane, or the first center pane.
+    fn return_focus_to_workbench(&mut self) {
+        let first_pane = self.panes.iter().next().map(|(pane, _)| *pane);
+        if let Some(pane) = first_pane {
+            self.focused = PanelLocation::Center(pane);
         }
     }
 
@@ -668,7 +705,7 @@ impl Workspace {
                 }
             }
             PanelLocation::Dock(side) => {
-                self.docks.get_mut(side).open = false;
+                self.docks.get_mut(side).visibility = DockVisibility::Hidden;
             }
         }
     }
@@ -752,6 +789,7 @@ mod tests {
     use super::*;
     use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
     use crate::workspace::workspace_command::{Chord, Mods};
+    use crate::workspace::workspace_dock::DockVisibility;
     use crate::workspace::workspace_panel::{Panel, erase};
     use crate::workspace::workspace_stores::CounterId;
 
@@ -884,24 +922,24 @@ mod tests {
     }
 
     #[test]
-    fn toggle_dock_opens_and_focuses() {
+    fn open_dock_opens_and_focuses() {
         let (mut workspace, mut stores) = workspace_with_right_dock();
 
-        workspace.apply_command(Command::ToggleDock(DockSide::Right), &mut stores);
+        workspace.apply_command(Command::OpenDock(DockSide::Right), &mut stores);
 
-        assert!(workspace.docks.right.open);
+        assert!(workspace.docks.right.is_open());
         assert_eq!(workspace.focused, PanelLocation::Dock(DockSide::Right));
     }
 
     #[test]
-    fn toggle_dock_closes_without_changing_focus_location() {
+    fn hide_dock_returns_focus_to_workbench() {
         let (mut workspace, mut stores) = workspace_with_right_dock();
-        workspace.apply_command(Command::ToggleDock(DockSide::Right), &mut stores);
+        workspace.apply_command(Command::OpenDock(DockSide::Right), &mut stores);
 
-        workspace.apply_command(Command::ToggleDock(DockSide::Right), &mut stores);
+        workspace.apply_command(Command::HideDock(DockSide::Right), &mut stores);
 
-        assert!(!workspace.docks.right.open);
-        assert_eq!(workspace.focused, PanelLocation::Dock(DockSide::Right));
+        assert!(workspace.docks.right.is_hidden());
+        assert!(matches!(workspace.focused, PanelLocation::Center(_)));
     }
 
     #[test]
@@ -1006,12 +1044,12 @@ mod tests {
     fn closing_last_tab_in_only_pane_collapses_dock() {
         let (mut workspace, mut stores) = workspace_with_right_dock();
         workspace.focused = PanelLocation::Dock(DockSide::Right);
-        workspace.docks.right.open = true;
+        workspace.docks.right.visibility = DockVisibility::Open;
 
         workspace.apply_command(Command::CloseActiveTab, &mut stores);
 
         assert!(workspace.docks.right.tabs.is_empty());
-        assert!(!workspace.docks.right.open);
+        assert!(workspace.docks.right.is_hidden());
     }
 
     #[test]
@@ -1261,7 +1299,7 @@ mod tests {
         workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
 
         assert!(workspace.drag_state.is_none());
-        assert!(workspace.docks.right.open);
+        assert!(workspace.docks.right.is_open());
         assert_eq!(workspace.docks.right.tabs.len(), 1);
         assert_eq!(workspace.docks.right.tabs.tabs[0].title(), "Counter");
 

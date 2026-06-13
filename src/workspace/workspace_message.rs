@@ -9,7 +9,8 @@
 //! key routing and command dispatch share the single reducer.
 
 use crate::workspace::workspace_command::{Chord, Command};
-use crate::workspace::workspace_location::PanelLocation;
+use crate::workspace::workspace_dock::DockVisibility;
+use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_panel::ErasedMessage;
 use iced::widget::pane_grid;
 use iced::{Point, Size};
@@ -30,6 +31,11 @@ pub enum WorkspaceMessage {
     PaneClicked(pane_grid::Pane),
     /// A dock's tab strip or rail was clicked — focus moves to the dock.
     DockFocused(PanelLocation),
+    /// Set a dock to a specific visibility state. Used by status bar controls.
+    DockVisibilityChanged {
+        side: DockSide,
+        visibility: DockVisibility,
+    },
     /// A raw key chord from the keyboard subscription. The reducer
     /// applies panel-first capture: the focused panel may swallow it,
     /// otherwise it resolves against the workspace keymap.
@@ -85,6 +91,11 @@ impl std::fmt::Debug for WorkspaceMessage {
             WorkspaceMessage::DockFocused(location) => {
                 f.debug_tuple("DockFocused").field(location).finish()
             }
+            WorkspaceMessage::DockVisibilityChanged { side, visibility } => f
+                .debug_struct("DockVisibilityChanged")
+                .field("side", side)
+                .field("visibility", visibility)
+                .finish(),
             WorkspaceMessage::Key(chord) => f.debug_tuple("Key").field(chord).finish(),
             WorkspaceMessage::Command(command) => f.debug_tuple("Command").field(command).finish(),
             WorkspaceMessage::ToggleTheme => f.debug_tuple("ToggleTheme").finish(),

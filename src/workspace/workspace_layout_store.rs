@@ -95,6 +95,7 @@ impl LayoutStore for FileLayoutStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::workspace_dock::DockVisibility;
     use crate::workspace::workspace_persistence::{
         CenterNode, DockSnapshot, FocusSnapshot, PaneSnapshot,
     };
@@ -106,7 +107,7 @@ mod tests {
                 tabs: Vec::new(),
                 active: 0,
             },
-            open: false,
+            visibility: DockVisibility::Hidden,
         };
         LayoutSnapshot {
             center: CenterNode::Pane(PaneSnapshot {
