@@ -36,8 +36,8 @@ use crate::shared::design::ThemeMode;
 use crate::workspace::DockVisibility;
 use crate::workspace::workspace_state::tab_drag_subscription;
 use crate::workspace::{
-    AppStores, Chord, CrossWindowDropPreview, DragState, DropTarget, FileLayoutStore, LayoutStore,
-    Mods, PaneState, Panel, PanelKind, PanelRegistry, Workspace, WorkspaceMessage,
+    AppStores, Chord, CrossWindowDropPreview, DockSide, DragState, DropTarget, FileLayoutStore,
+    LayoutStore, Mods, PaneState, Panel, PanelKind, PanelRegistry, Workspace, WorkspaceMessage,
     chord_from_keyboard_event,
 };
 
@@ -189,6 +189,10 @@ impl OpenZone {
         let mut workspace = Workspace::single_pane(PaneState::new(vec![panel]), self.theme_mode)
             .with_window_size(size);
         workspace.set_scratch_factory(|| Box::new(ScratchPanel::new()));
+        workspace.set_dock_factory(DockSide::Left, build_activity_surface);
+        workspace.set_dock_factory(DockSide::Right, build_conversation_surface);
+        workspace.set_dock_factory(DockSide::Bottom, build_output_surface);
+        workspace.ensure_scratch_fallback();
         self.workspaces.insert(workspace_window, workspace);
         open.discard()
     }
@@ -205,7 +209,11 @@ impl OpenZone {
                     self.theme_mode,
                 );
                 workspace.set_scratch_factory(|| Box::new(ScratchPanel::new()));
+                workspace.set_dock_factory(DockSide::Left, build_activity_surface);
+                workspace.set_dock_factory(DockSide::Right, build_conversation_surface);
+                workspace.set_dock_factory(DockSide::Bottom, build_output_surface);
                 workspace.ensure_scratch_fallback();
+                workspace.populate_empty_docks(&mut self.stores);
                 workspace
             }
             None => build_workspace(&mut self.stores, self.theme_mode),
@@ -551,18 +559,43 @@ fn build_workspace(_stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace 
     let center = PaneState::new(vec![Box::new(ScratchPanel::new())]);
     let mut workspace = Workspace::single_pane(center, theme_mode);
     workspace.set_scratch_factory(|| Box::new(ScratchPanel::new()));
+    workspace.set_dock_factory(DockSide::Left, build_activity_surface);
+    workspace.set_dock_factory(DockSide::Right, build_conversation_surface);
+    workspace.set_dock_factory(DockSide::Bottom, build_output_surface);
     workspace.ensure_scratch_fallback();
     workspace
 }
 
-/// Build an additional workspace window with its own layout — a single
-/// ScratchPanel as the non-durable startup tab.
+/// Build an additional workspace window with dock surface factories
+/// wired but no seeded dock content — docks open empty until the
+/// user (or restore) triggers them.
 fn build_secondary_workspace(_stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace {
     let center = PaneState::new(vec![Box::new(ScratchPanel::new())]);
     let mut workspace = Workspace::single_pane(center, theme_mode);
     workspace.set_scratch_factory(|| Box::new(ScratchPanel::new()));
+    workspace.set_dock_factory(DockSide::Left, build_activity_surface);
+    workspace.set_dock_factory(DockSide::Right, build_conversation_surface);
+    workspace.set_dock_factory(DockSide::Bottom, build_output_surface);
     workspace.ensure_scratch_fallback();
     workspace
+}
+
+// ---- Default dock surface factories -----------------------------------------
+// The composition root owns these factories; the shell calls them when
+// opening an empty dock. Each factory is a function pointer matching
+// `fn(&mut AppStores) -> Box<dyn Panel>`. Replace the ScratchPanel placeholder
+// with the real Activity/Conversation/Output constructors when they land.
+
+fn build_activity_surface(_stores: &mut AppStores) -> Box<dyn Panel> {
+    Box::new(ScratchPanel::new())
+}
+
+fn build_conversation_surface(_stores: &mut AppStores) -> Box<dyn Panel> {
+    Box::new(ScratchPanel::new())
+}
+
+fn build_output_surface(_stores: &mut AppStores) -> Box<dyn Panel> {
+    Box::new(ScratchPanel::new())
 }
 
 #[cfg(test)]
