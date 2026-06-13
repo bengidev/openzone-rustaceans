@@ -54,8 +54,8 @@ impl Default for TextPanel {
 }
 
 impl Panel for TextPanel {
-    fn title(&self) -> String {
-        String::from("Text")
+    fn title(&self) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed("Text")
     }
 
     fn kind(&self) -> PanelKind {

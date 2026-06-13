@@ -39,7 +39,9 @@ pub use workspace_layout_store::{FileLayoutStore, LayoutStore, LayoutStoreError}
 pub use workspace_location::{DockSide, PanelLocation};
 pub use workspace_message::WorkspaceMessage;
 pub use workspace_pane_state::PaneState;
-pub use workspace_panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
+pub use workspace_panel::{
+    CloseRequest, ErasedMessage, Panel, PanelKind, StatusSink, downcast, erase,
+};
 pub use workspace_persistence::{LayoutSnapshot, capture, restore};
 pub use workspace_registry::{PanelConstructor, PanelRegistry};
 pub use workspace_state::{CrossWindowDropPreview, Workspace};

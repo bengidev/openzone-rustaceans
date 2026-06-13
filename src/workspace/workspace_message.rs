@@ -59,6 +59,10 @@ pub enum WorkspaceMessage {
     /// The hosting OS window was resized. Carries the new logical size so
     /// drag hit-testing stays aligned with the rendered layout.
     WindowResized(Size),
+    /// User confirmed discarding changes to close a tab
+    ConfirmCloseDiscard { location: PanelLocation, tab: usize },
+    /// User canceled closing a tab (closes the modal popup)
+    ConfirmCloseCancel,
 }
 
 impl std::fmt::Debug for WorkspaceMessage {
@@ -100,6 +104,12 @@ impl std::fmt::Debug for WorkspaceMessage {
             WorkspaceMessage::WindowResized(size) => {
                 f.debug_tuple("WindowResized").field(size).finish()
             }
+            WorkspaceMessage::ConfirmCloseDiscard { location, tab } => f
+                .debug_struct("ConfirmCloseDiscard")
+                .field("location", location)
+                .field("tab", tab)
+                .finish(),
+            WorkspaceMessage::ConfirmCloseCancel => f.debug_tuple("ConfirmCloseCancel").finish(),
         }
     }
 }

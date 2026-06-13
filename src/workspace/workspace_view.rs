@@ -8,13 +8,8 @@
 //! render as minimal rails. All styling resolves through
 //! `shared::design` tokens — no hardcoded colors or sizes.
 
-use iced::alignment::Horizontal;
-use iced::widget::canvas::{Frame, Geometry, Program, Stroke};
-use iced::widget::{
-    Canvas, PaneGrid, button, canvas, column, container, mouse_area, pane_grid, row, space, stack,
-    text,
-};
-use iced::{Background, Border, Color, Element, Length, Point, Rectangle, Size, mouse};
+use crate::shared::design::StatusToken;
+use iced::widget::Space;
 
 use crate::shared::design::{
     BackgroundToken, BorderToken, ForegroundToken, OpenZoneTheme, RadiusToken, SpacingToken,
@@ -28,8 +23,18 @@ use crate::workspace::workspace_layout_metrics::{
 use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_message::WorkspaceMessage;
 use crate::workspace::workspace_pane_state::PaneState;
+use crate::workspace::workspace_panel::{
+    CloseRequest, ErasedMessage, Panel, PanelKind, StatusSink,
+};
 use crate::workspace::workspace_state::Workspace;
 use crate::workspace::workspace_stores::AppStores;
+use iced::alignment::Horizontal;
+use iced::widget::canvas::{Frame, Geometry, Program, Stroke};
+use iced::widget::{
+    Canvas, PaneGrid, button, canvas, column, container, mouse_area, pane_grid, row, space, stack,
+    text,
+};
+use iced::{Background, Border, Color, Element, Length, Point, Rectangle, Size, mouse};
 
 /// Render the whole workspace shell as a view over `stores`.
 ///
@@ -66,13 +71,119 @@ pub fn view<'a>(workspace: &'a Workspace, stores: &'a AppStores) -> Element<'a, 
         .width(Length::Fill)
         .height(Length::Fill);
 
-    if workspace.drag_state.is_some() || workspace.cross_window_drop_preview.is_some() {
-        stack![shell, drop_overlay(workspace, theme)]
+    let decorated =
+        if workspace.drag_state.is_some() || workspace.cross_window_drop_preview.is_some() {
+            Element::from(
+                stack![shell, drop_overlay(workspace, theme)]
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+        } else {
+            shell.into()
+        };
+
+    if let Some(confirm) = &workspace.close_confirmation {
+        let overlay = container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.4))),
+                ..container::Style::default()
+            });
+        // Modal Content Box
+        let title_text = text(confirm.message.to_string())
+            .size(TypeRole::LabelMd.size())
+            .style(move |_| text::Style {
+                color: Some(theme.foreground(ForegroundToken::Primary)),
+            });
+
+        let cancel_btn = button(
+            text("Cancel")
+                .size(TypeRole::LabelMd.size())
+                .style(move |_| text::Style {
+                    color: Some(theme.foreground(ForegroundToken::Secondary)),
+                }),
+        )
+        .padding([
+            SpacingToken::S2.value() as u16,
+            SpacingToken::S3.value() as u16,
+        ])
+        .on_press(WorkspaceMessage::ConfirmCloseCancel)
+        .style(move |_, _| button::Style {
+            background: Some(Background::Color(
+                theme.background(BackgroundToken::Tertiary),
+            )),
+            border: Border {
+                color: theme.border(BorderToken::Default),
+                width: 1.0,
+                radius: RadiusToken::Sm.value().into(),
+            },
+            ..button::Style::default()
+        });
+
+        let discard_btn = button(
+            text("Discard")
+                .size(TypeRole::LabelMd.size())
+                .style(move |_| text::Style {
+                    color: Some(theme.status(StatusToken::Danger)),
+                }),
+        )
+        .padding([
+            SpacingToken::S2.value() as u16,
+            SpacingToken::S3.value() as u16,
+        ])
+        .on_press(WorkspaceMessage::ConfirmCloseDiscard {
+            location: confirm.location,
+            tab: confirm.tab,
+        })
+        .style(move |_, _| button::Style {
+            background: Some(Background::Color(Color::TRANSPARENT)),
+            border: Border {
+                color: theme.status(StatusToken::Danger),
+                width: 1.0,
+                radius: RadiusToken::Sm.value().into(),
+            },
+            ..button::Style::default()
+        });
+
+        let modal_box = container(
+            column![
+                title_text,
+                Space::new().height(Length::Fixed(SpacingToken::S4.value())),
+                row![
+                    cancel_btn,
+                    Space::new().width(Length::Fixed(SpacingToken::S2.value())),
+                    discard_btn
+                ]
+            ]
+            .align_x(Horizontal::Center),
+        )
+        .padding(SpacingToken::S5.value())
+        .width(Length::Shrink)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(
+                theme.background(BackgroundToken::Primary),
+            )),
+            border: Border {
+                color: theme.border(BorderToken::Strong),
+                width: 1.0,
+                radius: RadiusToken::Md.value().into(),
+            },
+            ..container::Style::default()
+        });
+
+        let modal_centered = container(modal_box)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center);
+
+        stack![decorated, overlay, modal_centered]
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
     } else {
-        shell.into()
+        decorated
     }
 }
 
@@ -272,29 +383,54 @@ fn title_bar(theme: OpenZoneTheme) -> Element<'static, WorkspaceMessage> {
 
 /// Bottom status bar — reports the focused location and active panel.
 fn status_bar(theme: OpenZoneTheme, workspace: &Workspace) -> Element<'_, WorkspaceMessage> {
-    let (region, active_title) = match workspace.focused {
-        PanelLocation::Center(pane) => (
-            String::from("Center"),
-            workspace
+    let segment_first = match workspace.focused {
+        PanelLocation::Center(pane) => {
+            let active_title = workspace
                 .panes
                 .get(pane)
                 .and_then(|pane_state| pane_state.active_panel())
                 .map(|panel| panel.title())
-                .unwrap_or_else(|| String::from("—")),
-        ),
+                .unwrap_or_else(|| std::borrow::Cow::Borrowed("—"));
+            format!("Focus: Center / {active_title}")
+        }
         PanelLocation::Dock(side) => {
             let dock: &Dock = workspace.docks.get(side);
-            (
-                side.label().to_string(),
-                dock.tabs
-                    .active_panel()
-                    .map(|panel| panel.title())
-                    .unwrap_or_else(|| String::from("—")),
-            )
+            let active_title = dock
+                .tabs
+                .active_panel()
+                .map(|panel| panel.title())
+                .unwrap_or_else(|| std::borrow::Cow::Borrowed("—"));
+            let label_side = side.label();
+            format!("Focus: {label_side} / {active_title}")
         }
     };
 
-    let label = text(format!("Focus: {region} / {active_title}"))
+    let mut segments = vec![std::borrow::Cow::Owned(segment_first)];
+
+    // Get contributions from the active panel of the focused location
+    let active_panel = match workspace.focused {
+        PanelLocation::Center(pane) => workspace
+            .panes
+            .get(pane)
+            .and_then(|pane_state| pane_state.tabs.get(pane_state.active)),
+        PanelLocation::Dock(side) => {
+            let dock = workspace.docks.get(side);
+            dock.tabs.tabs.get(dock.tabs.active)
+        }
+    };
+
+    if let Some(panel) = active_panel {
+        let mut sink = StatusSink::new(&mut segments);
+        panel.status_contribution(&mut sink);
+    }
+
+    let joined = segments
+        .iter()
+        .map(|s| s.as_ref())
+        .collect::<Vec<_>>()
+        .join("   ");
+
+    let label = text(joined)
         .size(TypeRole::MonoSm.size())
         .style(move |_| text::Style {
             color: Some(theme.foreground(ForegroundToken::Secondary)),
@@ -393,8 +529,13 @@ fn tab_strip<'a>(
         }
 
         let active = index == pane_state.active;
+        let display_title = if panel.is_dirty() {
+            format!("• {}", panel.title())
+        } else {
+            panel.title().to_string()
+        };
         let label =
-            text(panel.title())
+            text(display_title)
                 .size(TypeRole::LabelMd.size())
                 .style(move |_: &iced::Theme| text::Style {
                     color: Some(if active {
