@@ -95,8 +95,8 @@ impl Panel for TextPanel {
         matches!(chord.key, KeyRef::Char(_) | KeyRef::Backspace)
     }
 
-    fn snapshot(&self, _stores: &AppStores) -> serde_json::Value {
-        serde_json::json!({ "content": self.content })
+    fn snapshot(&self, _stores: &AppStores) -> Option<serde_json::Value> {
+        Some(serde_json::json!({ "content": self.content }))
     }
 }
 
@@ -124,7 +124,7 @@ mod tests {
             erase(TextMessage::Changed(String::from("draft"))),
             &mut stores,
         );
-        let restored = TextPanel::from_snapshot(panel.snapshot(&stores));
+        let restored = TextPanel::from_snapshot(panel.snapshot(&stores).expect("durable"));
         assert_eq!(restored.content(), "draft");
     }
 

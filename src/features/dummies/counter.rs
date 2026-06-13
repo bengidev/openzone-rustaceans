@@ -95,9 +95,9 @@ impl Panel for CounterPanel {
         }
     }
 
-    fn snapshot(&self, stores: &AppStores) -> serde_json::Value {
+    fn snapshot(&self, stores: &AppStores) -> Option<serde_json::Value> {
         let count = stores.counter.count(self.id).unwrap_or(0);
-        serde_json::json!({ "count": count })
+        Some(serde_json::json!({ "count": count }))
     }
 
     fn on_close(&mut self, stores: &mut AppStores) {
@@ -139,7 +139,7 @@ mod tests {
         stores.counter.increment(panel.id());
         stores.counter.increment(panel.id());
 
-        let snapshot = panel.snapshot(&stores);
+        let snapshot = panel.snapshot(&stores).expect("durable");
 
         assert_eq!(snapshot.get("count").and_then(|v| v.as_i64()), Some(2));
     }
@@ -150,7 +150,7 @@ mod tests {
         let mut panel = CounterPanel::new(&mut stores_a);
         panel.update(erase(CounterMessage::Increment), &mut stores_a);
         panel.update(erase(CounterMessage::Increment), &mut stores_a);
-        let snapshot = panel.snapshot(&stores_a);
+        let snapshot = panel.snapshot(&stores_a).expect("durable");
 
         // Rehydrating in a fresh store seeds a slot at the persisted
         // count: the snapshot is the only thing crossing the boundary.

@@ -43,7 +43,9 @@ pub use workspace_panel::{ErasedMessage, Panel, PanelKind, downcast, erase};
 pub use workspace_persistence::{LayoutSnapshot, capture, restore};
 pub use workspace_registry::{PanelConstructor, PanelRegistry};
 pub use workspace_state::{CrossWindowDropPreview, Workspace};
-pub use workspace_stores::{AppStores, ClockStore, CounterId, CounterStore};
+pub use workspace_stores::AppStores;
+#[cfg(test)]
+pub use workspace_stores::{ClockStore, CounterId, CounterStore};
 
 use crate::shared::design::ThemeMode;
 
@@ -118,12 +120,6 @@ impl WorkspaceApp {
         ];
         if self.workspace.is_tab_drag_active() {
             streams.push(crate::workspace::workspace_state::tab_drag_subscription());
-        }
-        if self.workspace.has_clock_panel() {
-            streams.push(
-                iced::time::every(std::time::Duration::from_secs(1))
-                    .map(|_| WorkspaceMessage::ClockTick),
-            );
         }
         Subscription::batch(streams)
     }

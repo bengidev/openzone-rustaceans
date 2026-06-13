@@ -80,8 +80,8 @@ impl Panel for ClockPanel {
         Subscription::none()
     }
 
-    fn snapshot(&self, stores: &AppStores) -> serde_json::Value {
-        serde_json::json!({ "ticks": stores.clock.ticks() })
+    fn snapshot(&self, stores: &AppStores) -> Option<serde_json::Value> {
+        Some(serde_json::json!({ "ticks": stores.clock.ticks() }))
     }
 }
 
@@ -102,6 +102,7 @@ mod tests {
         assert_eq!(
             panel
                 .snapshot(&stores)
+                .expect("durable")
                 .get("ticks")
                 .and_then(|v| v.as_u64()),
             Some(2)
@@ -126,7 +127,10 @@ mod tests {
         // "every Clock panel reads the same value" invariant.
         assert_eq!(a.snapshot(&stores), b.snapshot(&stores));
         assert_eq!(
-            a.snapshot(&stores).get("ticks").and_then(|v| v.as_u64()),
+            a.snapshot(&stores)
+                .expect("durable")
+                .get("ticks")
+                .and_then(|v| v.as_u64()),
             Some(1)
         );
     }

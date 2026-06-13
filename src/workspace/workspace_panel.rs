@@ -55,8 +55,12 @@ pub type ErasedMessage = Arc<dyn Any + Send + Sync>;
 /// kinds; panels themselves are trait objects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PanelKind {
+    Scratch,
+    #[cfg(test)]
     Counter,
+    #[cfg(test)]
     Text,
+    #[cfg(test)]
     Clock,
 }
 
@@ -119,8 +123,9 @@ pub trait Panel {
     /// `stores` so a Counter panel persists the canonical store count
     /// rather than a stale local copy. Stores a rehydration handle
     /// (e.g. a counter value, a file path), never the panel's full
-    /// content.
-    fn snapshot(&self, stores: &AppStores) -> serde_json::Value;
+    /// content. Returns `None` when the panel is non-durable and should
+    /// be omitted from layout capture entirely.
+    fn snapshot(&self, stores: &AppStores) -> Option<serde_json::Value>;
 
     /// Release any store slot this panel holds. Called by the workspace
     /// reducer when the tab carrying this panel is closed, so an
