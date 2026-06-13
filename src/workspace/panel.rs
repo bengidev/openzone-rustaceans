@@ -55,8 +55,12 @@ pub type ErasedMessage = Arc<dyn Any + Send + Sync>;
 /// kinds; panels themselves are trait objects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PanelKind {
+    Scratch,
+    #[cfg(test)]
     Counter,
+    #[cfg(test)]
     Text,
+    #[cfg(test)]
     Clock,
 }
 

@@ -22,6 +22,8 @@ use std::sync::Arc;
 use iced::event::{self, Event};
 use iced::{Element, Size, Subscription, Task, Theme, window};
 
+use crate::features::ScratchPanel;
+#[cfg(test)]
 use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
 use crate::features::onboarding::infrastructure::file_persistence::FileOnboardingPersistence;
 use crate::features::onboarding::infrastructure::memory_persistence::InMemoryOnboardingPersistence;
@@ -31,10 +33,11 @@ use crate::features::onboarding::{
 };
 use crate::shared::design::ThemeMode;
 use crate::workspace::state::tab_drag_subscription;
+#[cfg(test)]
 use crate::workspace::stores::CounterId;
 use crate::workspace::{
-    AppStores, Chord, CrossWindowDropPreview, Docks, DragState, DropTarget, FileLayoutStore,
-    LayoutStore, Mods, PaneState, Panel, PanelKind, PanelRegistry, Workspace, WorkspaceMessage,
+    AppStores, Chord, CrossWindowDropPreview, DragState, DropTarget, FileLayoutStore, LayoutStore,
+    Mods, PaneState, Panel, PanelKind, PanelRegistry, Workspace, WorkspaceMessage,
     chord_from_keyboard_event,
 };
 
@@ -126,6 +129,7 @@ impl OpenZone {
                 Task::none()
             }
             Message::OpenWorkspace => self.open_additional_workspace(),
+            #[cfg(test)]
             Message::ClockTick => {
                 self.stores.clock.tick();
                 Task::none()
@@ -187,11 +191,10 @@ impl OpenZone {
         let settings = workspace_window_settings();
         let size = settings.size;
         let (workspace_window, open) = window::open(settings);
-        self.workspaces.insert(
-            workspace_window,
-            Workspace::single_pane(PaneState::new(vec![panel]), self.theme_mode)
-                .with_window_size(size),
-        );
+        let mut workspace = Workspace::single_pane(PaneState::new(vec![panel]), self.theme_mode)
+            .with_window_size(size);
+        workspace.set_scratch_factory(|| Box::new(ScratchPanel::new()));
+        self.workspaces.insert(workspace_window, workspace);
         open.discard()
     }
 
@@ -200,7 +203,15 @@ impl OpenZone {
     fn restore_or_build_workspace(&mut self) -> Workspace {
         match self.layout_store.load() {
             Some(snapshot) => {
-                workspace::restore(&snapshot, &self.registry, &mut self.stores, self.theme_mode)
+                let mut workspace = workspace::restore(
+                    &snapshot,
+                    &self.registry,
+                    &mut self.stores,
+                    self.theme_mode,
+                );
+                workspace.set_scratch_factory(|| Box::new(ScratchPanel::new()));
+                workspace.ensure_scratch_fallback();
+                workspace
             }
             None => build_workspace(&mut self.stores, self.theme_mode),
         }
@@ -421,17 +432,12 @@ impl OpenZone {
             }
         }
 
-        if self.any_workspace_has_clock() {
-            streams.push(
-                iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::ClockTick),
-            );
-        }
-
         streams.push(window::close_events().map(Message::WindowClosed));
 
         Subscription::batch(streams)
     }
 
+    #[cfg(test)]
     fn any_workspace_has_clock(&self) -> bool {
         self.workspaces
             .values()
@@ -476,6 +482,7 @@ enum Message {
     /// Open another workspace window (title bar or `Cmd+Shift+N`).
     OpenWorkspace,
     /// One tick from the single app-level Clock subscription.
+    #[cfg(test)]
     ClockTick,
     WindowClosed(window::Id),
 }
@@ -547,62 +554,30 @@ impl LayoutStore for NoopLayoutStore {
 
 fn build_registry() -> PanelRegistry {
     let mut registry = PanelRegistry::new();
-    registry
-        .register(PanelKind::Counter, |snapshot, stores| {
-            Box::new(CounterPanel::from_snapshot(snapshot, stores))
-        })
-        .register(PanelKind::Text, |snapshot, _stores| {
-            Box::new(TextPanel::from_snapshot(snapshot))
-        })
-        .register(PanelKind::Clock, |snapshot, stores| {
-            Box::new(ClockPanel::from_snapshot(snapshot, stores))
-        });
+    registry.register(PanelKind::Scratch, |snapshot, _stores| {
+        Box::new(ScratchPanel::from_snapshot(snapshot))
+    });
     registry
 }
 
-/// Build the primary workspace layout: one center pane hosting the dummy
-/// panels as tabs, with one dummy panel per edge dock.
-fn build_workspace(stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace {
-    let center_tabs: Vec<Box<dyn Panel>> = vec![
-        Box::new(CounterPanel::new(stores)),
-        Box::new(TextPanel::new()),
-        Box::new(ClockPanel::new()),
-    ];
-
-    let docks = Docks::new(
-        PaneState::new(vec![Box::new(ClockPanel::new())]),
-        PaneState::new(vec![Box::new(CounterPanel::new(stores))]),
-        PaneState::new(vec![Box::new(TextPanel::new())]),
-    );
-
-    Workspace::with_docks(PaneState::new(center_tabs), docks, theme_mode)
+/// Build the primary workspace layout: one center pane hosting a
+/// single ScratchPanel as the non-durable startup tab.
+fn build_workspace(_stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace {
+    let center = PaneState::new(vec![Box::new(ScratchPanel::new())]);
+    let mut workspace = Workspace::single_pane(center, theme_mode);
+    workspace.set_scratch_factory(|| Box::new(ScratchPanel::new()));
+    workspace.ensure_scratch_fallback();
+    workspace
 }
 
-/// Build an additional workspace window with its own layout but shared
-/// store-backed Counter and Clock panels.
-fn build_secondary_workspace(stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace {
-    let shared_counter = shared_counter_id(stores);
-    let center_tabs: Vec<Box<dyn Panel>> = vec![
-        Box::new(CounterPanel::with_id(shared_counter)),
-        Box::new(ClockPanel::new()),
-    ];
-
-    Workspace::single_pane(PaneState::new(center_tabs), theme_mode)
-}
-
-/// Reuse the first live counter slot when opening another window so both
-/// windows observe the same count after a store mutation.
-///
-/// Assumes slot 0 belongs to the primary workspace's center counter
-/// (monotonically allocated from 0; [`build_workspace`] creates the
-/// center counter before any dock counters). If no slot is live yet,
-/// allocates a fresh one.
-fn shared_counter_id(stores: &mut AppStores) -> CounterId {
-    if stores.counter.count(0).is_some() {
-        0
-    } else {
-        stores.counter.create()
-    }
+/// Build an additional workspace window with its own layout — a single
+/// ScratchPanel as the non-durable startup tab.
+fn build_secondary_workspace(_stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace {
+    let center = PaneState::new(vec![Box::new(ScratchPanel::new())]);
+    let mut workspace = Workspace::single_pane(center, theme_mode);
+    workspace.set_scratch_factory(|| Box::new(ScratchPanel::new()));
+    workspace.ensure_scratch_fallback();
+    workspace
 }
 
 #[cfg(test)]

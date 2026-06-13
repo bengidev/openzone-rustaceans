@@ -53,6 +53,7 @@ pub enum WorkspaceMessage {
     /// fan-out). Removing the last Clock tab also removes the gating
     /// reason for the subscription, so Iced stops it without orphan
     /// streams.
+    #[cfg(test)]
     ClockTick,
     /// A drag-and-drop interaction on the center pane grid. On
     /// `Dropped` the reducer reorders the panes; other phases are no-ops.
@@ -94,6 +95,7 @@ impl std::fmt::Debug for WorkspaceMessage {
             WorkspaceMessage::Command(command) => f.debug_tuple("Command").field(command).finish(),
             WorkspaceMessage::ToggleTheme => f.debug_tuple("ToggleTheme").finish(),
             WorkspaceMessage::NewWindow => f.debug_tuple("NewWindow").finish(),
+            #[cfg(test)]
             WorkspaceMessage::ClockTick => f.debug_tuple("ClockTick").finish(),
             WorkspaceMessage::PaneDragged(event) => {
                 f.debug_tuple("PaneDragged").field(event).finish()

@@ -5,11 +5,11 @@
 //! These stores are **app-root** state: in the live application they are
 //! sibling fields on `OpenZone`, never owned by [`Workspace`]. The
 //! workspace borrows them as `&mut AppStores` through its `update` path
-//! (single-writer, no interior mutability locks). Panels become view-
-//! over-handle: a [`crate::features::dummies::CounterPanel`] holds a
-//! [`CounterId`] and reads the count from [`CounterStore`]; a
-//! [`crate::features::dummies::ClockPanel`] reads the global tick from
-//! [`ClockStore`].
+//! (single-writer, no interior mutability locks). In test builds, a
+//! [`crate::features::dummies::CounterPanel`] reads from
+//! [`CounterStore`] and a [`crate::features::dummies::ClockPanel`]
+//! reads from [`ClockStore`]; both stores are `#[cfg(test)]` fields on
+//! [`AppStores`].
 //!
 //! Keeping stores at app root rather than inside [`Workspace`] is what
 //! lets the reducer split-borrow them alongside per-window workspace
@@ -140,7 +140,9 @@ impl ClockStore {
 /// "sibling fields on the app root" guidance buys.
 #[derive(Debug, Default, Clone)]
 pub struct AppStores {
+    #[cfg(test)]
     pub counter: CounterStore,
+    #[cfg(test)]
     pub clock: ClockStore,
 }
 

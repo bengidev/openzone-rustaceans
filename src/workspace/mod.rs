@@ -119,12 +119,6 @@ impl WorkspaceApp {
         if self.workspace.is_tab_drag_active() {
             streams.push(crate::workspace::state::tab_drag_subscription());
         }
-        if self.workspace.has_clock_panel() {
-            streams.push(
-                iced::time::every(std::time::Duration::from_secs(1))
-                    .map(|_| WorkspaceMessage::ClockTick),
-            );
-        }
         Subscription::batch(streams)
     }
 

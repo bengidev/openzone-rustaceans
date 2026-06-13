@@ -62,6 +62,8 @@ pub struct Workspace {
     pub cross_window_drop_preview: Option<CrossWindowDropPreview>,
     /// Panel waiting to be placed in a new OS window after a tear-off drop.
     torn_off_panel: Option<Box<dyn Panel>>,
+    /// Factory for creating scratch panels as fallback when panes empty.
+    scratch_factory: Option<fn() -> Box<dyn Panel>>,
 }
 
 /// Default workspace window size — matches `workspace_window_settings` in
@@ -92,6 +94,7 @@ impl Workspace {
             window_size: DEFAULT_WINDOW_SIZE,
             cross_window_drop_preview: None,
             torn_off_panel: None,
+            scratch_factory: None,
         }
     }
 
@@ -118,12 +121,36 @@ impl Workspace {
             window_size: DEFAULT_WINDOW_SIZE,
             cross_window_drop_preview: None,
             torn_off_panel: None,
+            scratch_factory: None,
         }
     }
 
     /// Take a panel queued by a tear-off drop, if any.
     pub fn take_torn_off_panel(&mut self) -> Option<Box<dyn Panel>> {
         self.torn_off_panel.take()
+    }
+
+    pub fn set_scratch_factory(&mut self, factory: fn() -> Box<dyn Panel>) {
+        self.scratch_factory = Some(factory);
+    }
+
+    pub(crate) fn ensure_scratch_fallback(&mut self) {
+        let Some(factory) = self.scratch_factory else {
+            return;
+        };
+        let empty_panes: Vec<_> = self
+            .panes
+            .iter()
+            .filter(|(_, ps)| ps.is_empty())
+            .map(|(pane, _)| *pane)
+            .collect();
+        for pane in empty_panes {
+            if let Some(ps) = self.panes.get_mut(pane) {
+                ps.tabs.push(factory());
+                ps.active = 0;
+                self.focused = PanelLocation::Center(pane);
+            }
+        }
     }
 
     /// Seed logical window size before the first resize event arrives.
@@ -299,6 +326,7 @@ impl Workspace {
                 self.theme = OpenZoneTheme::from_mode(self.theme_mode);
             }
             WorkspaceMessage::NewWindow => {}
+            #[cfg(test)]
             WorkspaceMessage::ClockTick => {
                 stores.clock.tick();
             }
@@ -482,6 +510,15 @@ impl Workspace {
 
         match location {
             PanelLocation::Center(pane) => {
+                if self.scratch_factory.is_some() {
+                    if let Some(ps) = self.panes.get_mut(pane) {
+                        let factory = self.scratch_factory.unwrap();
+                        ps.tabs.push(factory());
+                        ps.active = 0;
+                        self.focused = PanelLocation::Center(pane);
+                        return;
+                    }
+                }
                 if let Some((_, sibling)) = self.panes.close(pane) {
                     self.focused = PanelLocation::Center(sibling);
                 }
@@ -560,6 +597,15 @@ impl Workspace {
 
         match focused {
             PanelLocation::Center(pane) => {
+                if self.scratch_factory.is_some() {
+                    if let Some(ps) = self.panes.get_mut(pane) {
+                        let factory = self.scratch_factory.unwrap();
+                        ps.tabs.push(factory());
+                        ps.active = 0;
+                        self.focused = PanelLocation::Center(pane);
+                        return;
+                    }
+                }
                 if let Some((_, sibling)) = self.panes.close(pane) {
                     self.focused = PanelLocation::Center(sibling);
                 }
@@ -589,22 +635,6 @@ impl Workspace {
         }
     }
 
-    /// Whether any Clock panel exists anywhere in the layout. The
-    /// composition root uses this to gate the single app-level Clock
-    /// subscription across all workspace windows.
-    pub fn has_clock_panel(&self) -> bool {
-        let center_has = self
-            .panes
-            .iter()
-            .any(|(_, pane_state)| pane_has_clock(pane_state));
-        if center_has {
-            return true;
-        }
-        DockSide::ALL
-            .iter()
-            .any(|side| pane_has_clock(&self.docks.get(*side).tabs))
-    }
-
     /// Batch every live panel's panel-local subscription for this window.
     ///
     /// The 1 Hz Clock tick is owned once at app root in the multi-window
@@ -625,6 +655,25 @@ impl Workspace {
 
         Subscription::batch(streams)
     }
+    /// Check if any pane in the workspace contains a clock panel.
+    #[cfg(test)]
+    pub fn has_clock_panel(&self) -> bool {
+        for (_, pane_state) in self.panes.iter() {
+            if pane_has_clock(pane_state) {
+                return true;
+            }
+        }
+        if pane_has_clock(&self.docks.left.tabs) {
+            return true;
+        }
+        if pane_has_clock(&self.docks.right.tabs) {
+            return true;
+        }
+        if pane_has_clock(&self.docks.bottom.tabs) {
+            return true;
+        }
+        false
+    }
 }
 
 /// Track cursor movement and mouse release while a tab drag is active.
@@ -640,14 +689,13 @@ pub(crate) fn tab_drag_subscription() -> Subscription<WorkspaceMessage> {
     })
 }
 
-/// Whether a pane stack contains at least one Clock panel.
+#[cfg(test)]
 fn pane_has_clock(pane_state: &PaneState) -> bool {
     pane_state
         .tabs
         .iter()
         .any(|panel| panel.kind() == PanelKind::Clock)
 }
-
 fn panel_subscriptions(
     location: PanelLocation,
     pane_state: &PaneState,
