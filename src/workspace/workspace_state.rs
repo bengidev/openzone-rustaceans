@@ -203,7 +203,7 @@ impl Workspace {
             if !dock.is_open() || !dock.is_empty() {
                 continue;
             }
-            // Release the shared reference so we can mut-borrow again.
+            // Create default surface from factory, or hide dock.
             if let Some(panel) = self.create_dock_default_surface(side, stores) {
                 let dock = self.docks.get_mut(side);
                 dock.tabs.tabs.push(panel);

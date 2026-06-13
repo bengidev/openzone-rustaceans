@@ -566,6 +566,9 @@ fn build_workspace(_stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace 
     workspace
 }
 
+/// Build an additional workspace window with dock surface factories
+/// wired but no seeded dock content — docks open empty until the
+/// user (or restore) triggers them.
 fn build_secondary_workspace(_stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace {
     let center = PaneState::new(vec![Box::new(ScratchPanel::new())]);
     let mut workspace = Workspace::single_pane(center, theme_mode);
