@@ -71,6 +71,12 @@ pub struct Workspace {
     torn_off_panel: Option<Box<dyn Panel>>,
     /// Factory for creating scratch panels as fallback when panes empty.
     scratch_factory: Option<fn() -> Box<dyn Panel>>,
+    /// Default surface factory for the left (Activity) dock.
+    left_dock_factory: Option<fn(&mut AppStores) -> Box<dyn Panel>>,
+    /// Default surface factory for the right (Conversation) dock.
+    right_dock_factory: Option<fn(&mut AppStores) -> Box<dyn Panel>>,
+    /// Default surface factory for the bottom (Output) dock.
+    bottom_dock_factory: Option<fn(&mut AppStores) -> Box<dyn Panel>>,
     /// Optional close confirmation when closing a dirty tab.
     pub close_confirmation: Option<CloseConfirmation>,
 }
@@ -104,6 +110,9 @@ impl Workspace {
             cross_window_drop_preview: None,
             torn_off_panel: None,
             scratch_factory: None,
+            left_dock_factory: None,
+            right_dock_factory: None,
+            bottom_dock_factory: None,
             close_confirmation: None,
         }
     }
@@ -132,6 +141,9 @@ impl Workspace {
             cross_window_drop_preview: None,
             torn_off_panel: None,
             scratch_factory: None,
+            left_dock_factory: None,
+            right_dock_factory: None,
+            bottom_dock_factory: None,
             close_confirmation: None,
         }
     }
@@ -143,6 +155,63 @@ impl Workspace {
 
     pub fn set_scratch_factory(&mut self, factory: fn() -> Box<dyn Panel>) {
         self.scratch_factory = Some(factory);
+    }
+
+    /// Set the default surface factory for a dock side.
+    /// Supplied by the composition root; the shell calls it when
+    /// opening an empty dock.
+    pub fn set_dock_factory(
+        &mut self,
+        side: DockSide,
+        factory: fn(&mut AppStores) -> Box<dyn Panel>,
+    ) {
+        match side {
+            DockSide::Left => self.left_dock_factory = Some(factory),
+            DockSide::Right => self.right_dock_factory = Some(factory),
+            DockSide::Bottom => self.bottom_dock_factory = Some(factory),
+        }
+    }
+
+    /// Whether a dock side has a registered default surface factory.
+    pub fn has_dock_factory(&self, side: DockSide) -> bool {
+        match side {
+            DockSide::Left => self.left_dock_factory.is_some(),
+            DockSide::Right => self.right_dock_factory.is_some(),
+            DockSide::Bottom => self.bottom_dock_factory.is_some(),
+        }
+    }
+
+    /// Call the default surface factory for `side`, if registered.
+    fn create_dock_default_surface(
+        &self,
+        side: DockSide,
+        stores: &mut AppStores,
+    ) -> Option<Box<dyn Panel>> {
+        let factory = match side {
+            DockSide::Left => self.left_dock_factory,
+            DockSide::Right => self.right_dock_factory,
+            DockSide::Bottom => self.bottom_dock_factory,
+        }?;
+        Some(factory(stores))
+    }
+
+    /// After restore, fill empty open docks from factories.
+    /// Hides open docks that have neither tabs nor a factory.
+    pub fn populate_empty_docks(&mut self, stores: &mut AppStores) {
+        for side in DockSide::ALL {
+            let dock = self.docks.get(side);
+            if !dock.is_open() || !dock.is_empty() {
+                continue;
+            }
+            // Release the shared reference so we can mut-borrow again.
+            if let Some(panel) = self.create_dock_default_surface(side, stores) {
+                let dock = self.docks.get_mut(side);
+                dock.tabs.tabs.push(panel);
+                dock.tabs.active = 0;
+            } else {
+                self.docks.get_mut(side).visibility = DockVisibility::Hidden;
+            }
+        }
     }
 
     pub(crate) fn ensure_scratch_fallback(&mut self) {
@@ -593,7 +662,14 @@ impl Workspace {
         match command {
             Command::OpenDock(side) => {
                 self.docks.set_visibility(side, DockVisibility::Open);
-                if !self.docks.get(side).is_empty() {
+                if self.docks.get(side).is_empty() {
+                    if let Some(panel) = self.create_dock_default_surface(side, stores) {
+                        let dock = self.docks.get_mut(side);
+                        dock.tabs.tabs.push(panel);
+                        dock.tabs.active = 0;
+                        self.focused = PanelLocation::Dock(side);
+                    }
+                } else {
                     self.focused = PanelLocation::Dock(side);
                 }
             }
@@ -1561,5 +1637,88 @@ mod tests {
 
         assert_eq!(workspace.panes.len(), 2);
         assert_eq!(workspace.focused, PanelLocation::Center(panes[0]));
+    }
+
+    // -- Default dock surface factory tests ------------------------------------------
+
+    fn workspace_with_empty_docks() -> (Workspace, AppStores) {
+        let stores = AppStores::new();
+        let center = PaneState::new(vec![Box::new(TextPanel::new())]);
+        let workspace = Workspace::with_docks(center, Docks::empty(), ThemeMode::Dark);
+        (workspace, stores)
+    }
+
+    #[test]
+    fn open_empty_dock_without_factory_leaves_it_empty() {
+        let (mut workspace, mut stores) = workspace_with_empty_docks();
+        // No factory registered — Right dock should open but remain empty.
+        workspace.apply_command(Command::OpenDock(DockSide::Right), &mut stores);
+
+        assert!(workspace.docks.right.is_open());
+        assert!(workspace.docks.right.is_empty());
+        // Focus does NOT move to an empty dock with no factory.
+        assert!(workspace.focused.is_center());
+    }
+
+    #[test]
+    fn open_empty_dock_with_factory_populates_default_surface() {
+        let (mut workspace, mut stores) = workspace_with_empty_docks();
+        workspace.set_dock_factory(DockSide::Right, |_stores| Box::new(TextPanel::new()));
+
+        workspace.apply_command(Command::OpenDock(DockSide::Right), &mut stores);
+
+        assert!(workspace.docks.right.is_open());
+        assert_eq!(workspace.docks.right.tabs.len(), 1);
+        assert_eq!(workspace.focused, PanelLocation::Dock(DockSide::Right));
+    }
+
+    #[test]
+    fn has_dock_factory_reports_factory_presence() {
+        let (mut workspace, _stores) = workspace_with_empty_docks();
+        assert!(!workspace.has_dock_factory(DockSide::Left));
+
+        workspace.set_dock_factory(DockSide::Left, |_stores| Box::new(TextPanel::new()));
+        assert!(workspace.has_dock_factory(DockSide::Left));
+        assert!(!workspace.has_dock_factory(DockSide::Right));
+    }
+
+    #[test]
+    fn populate_empty_docks_fills_open_empty_docks_from_factories() {
+        let (mut workspace, mut stores) = workspace_with_empty_docks();
+        // Set up: Left dock open but empty, Right dock open with factory.
+        workspace.docks.left.visibility = DockVisibility::Open;
+        workspace.docks.right.visibility = DockVisibility::Open;
+        workspace.set_dock_factory(DockSide::Left, |_stores| Box::new(TextPanel::new()));
+        workspace.set_dock_factory(DockSide::Right, |_stores| Box::new(ClockPanel::new()));
+
+        workspace.populate_empty_docks(&mut stores);
+
+        assert_eq!(workspace.docks.left.tabs.len(), 1);
+        assert_eq!(workspace.docks.right.tabs.len(), 1);
+        // Bottom was not open, stays empty.
+        assert!(workspace.docks.bottom.is_empty());
+    }
+
+    #[test]
+    fn populate_empty_docks_hides_open_empty_docks_without_factory() {
+        let (mut workspace, mut stores) = workspace_with_empty_docks();
+        workspace.docks.right.visibility = DockVisibility::Open;
+        // No factory for Right.
+
+        workspace.populate_empty_docks(&mut stores);
+
+        assert!(workspace.docks.right.is_hidden());
+    }
+
+    #[test]
+    fn open_dock_with_existing_tabs_ignores_factory() {
+        let (mut workspace, mut stores) = workspace_with_right_dock();
+        workspace.set_dock_factory(DockSide::Right, |_stores| Box::new(TextPanel::new()));
+
+        workspace.apply_command(Command::OpenDock(DockSide::Right), &mut stores);
+
+        // The dock already had a ClockPanel tab; factory must not add another.
+        assert_eq!(workspace.docks.right.tabs.len(), 1);
+        assert!(workspace.docks.right.is_open());
     }
 }

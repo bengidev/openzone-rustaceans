@@ -438,18 +438,11 @@ fn status_bar(theme: OpenZoneTheme, workspace: &Workspace) -> Element<'_, Worksp
             color: Some(theme.foreground(ForegroundToken::Secondary)),
         });
 
-    // Right-side dock controls
     let dock_controls = row![
-        dock_control_button(theme, DockSide::Left, &workspace.docks.left, "Activity"),
-        dock_control_button(
-            theme,
-            DockSide::Right,
-            &workspace.docks.right,
-            "Conversation"
-        ),
-        dock_control_button(theme, DockSide::Bottom, &workspace.docks.bottom, "Output"),
-    ]
-    .spacing(SpacingToken::S2.value());
+        dock_control_button(theme, DockSide::Left, workspace, "Activity"),
+        dock_control_button(theme, DockSide::Right, workspace, "Conversation"),
+        dock_control_button(theme, DockSide::Bottom, workspace, "Output"),
+    ];
 
     // Layout: left segment fills, right segment shrinks
     let bar = row![container(label).width(Length::Fill), dock_controls,]
@@ -466,9 +459,10 @@ fn status_bar(theme: OpenZoneTheme, workspace: &Workspace) -> Element<'_, Worksp
 fn dock_control_button<'a>(
     theme: OpenZoneTheme,
     side: DockSide,
-    dock: &Dock,
+    workspace: &Workspace,
     label: &'static str,
 ) -> Element<'a, WorkspaceMessage> {
+    let dock = workspace.docks.get(side);
     use crate::workspace::workspace_command::Command;
 
     let is_empty = dock.is_empty();
@@ -511,8 +505,9 @@ fn dock_control_button<'a>(
         ..button::Style::default()
     });
 
-    // Empty dock: show label but disable interaction
-    if is_empty && !dock.is_open() {
+    // Disabled only when neither an existing tab nor a default surface factory exists.
+    let has_content = !is_empty || workspace.has_dock_factory(side);
+    if !has_content && !dock.is_open() {
         btn.into()
     } else if visibility == DockVisibility::Open {
         btn.on_press(WorkspaceMessage::Command(Command::HideDock(side)))
