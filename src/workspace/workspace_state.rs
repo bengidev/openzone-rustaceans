@@ -48,6 +48,10 @@ pub struct CloseConfirmation {
     pub message: std::borrow::Cow<'static, str>,
 }
 
+/// Signature for a default dock surface factory.
+/// The composition root supplies these; the shell calls them when
+/// opening an empty dock (if registered) or restoring one after persist.
+pub type DockSurfaceFactory = fn(&mut AppStores) -> Box<dyn Panel>;
 pub struct Workspace {
     /// Iced's recursive split tree of panes (splits *between* panes).
     pub panes: pane_grid::State<PaneState>,
@@ -72,11 +76,11 @@ pub struct Workspace {
     /// Factory for creating scratch panels as fallback when panes empty.
     scratch_factory: Option<fn() -> Box<dyn Panel>>,
     /// Default surface factory for the left (Activity) dock.
-    left_dock_factory: Option<fn(&mut AppStores) -> Box<dyn Panel>>,
+    left_dock_factory: Option<DockSurfaceFactory>,
     /// Default surface factory for the right (Conversation) dock.
-    right_dock_factory: Option<fn(&mut AppStores) -> Box<dyn Panel>>,
+    right_dock_factory: Option<DockSurfaceFactory>,
     /// Default surface factory for the bottom (Output) dock.
-    bottom_dock_factory: Option<fn(&mut AppStores) -> Box<dyn Panel>>,
+    bottom_dock_factory: Option<DockSurfaceFactory>,
     /// Optional close confirmation when closing a dirty tab.
     pub close_confirmation: Option<CloseConfirmation>,
 }
@@ -160,11 +164,7 @@ impl Workspace {
     /// Set the default surface factory for a dock side.
     /// Supplied by the composition root; the shell calls it when
     /// opening an empty dock.
-    pub fn set_dock_factory(
-        &mut self,
-        side: DockSide,
-        factory: fn(&mut AppStores) -> Box<dyn Panel>,
-    ) {
+    pub fn set_dock_factory(&mut self, side: DockSide, factory: DockSurfaceFactory) {
         match side {
             DockSide::Left => self.left_dock_factory = Some(factory),
             DockSide::Right => self.right_dock_factory = Some(factory),
