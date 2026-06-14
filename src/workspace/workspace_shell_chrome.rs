@@ -211,7 +211,6 @@ mod tests {
         OpenZoneTheme::dark()
     }
 
-
     #[test]
     fn focused_pane_accent_border_contract() {
         assert!(focused_pane_uses_accent_border(theme()));

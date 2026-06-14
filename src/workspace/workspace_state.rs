@@ -1323,7 +1323,6 @@ mod tests {
         assert_eq!(workspace.panes.len(), 1);
     }
 
-
     #[test]
     fn tab_close_requested_removes_clean_tab() {
         let (mut workspace, mut stores) = three_tab_workspace();
