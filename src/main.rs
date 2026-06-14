@@ -34,6 +34,7 @@ use crate::features::onboarding::{
 use crate::shared::design::ThemeMode;
 #[cfg(test)]
 use crate::workspace::DockVisibility;
+use crate::workspace::workspace_command_palette::default_command_items;
 use crate::workspace::workspace_state::tab_drag_subscription;
 use crate::workspace::{
     AppStores, Chord, CrossWindowDropPreview, DockSide, DragState, DropTarget, FileLayoutStore,
@@ -116,6 +117,12 @@ impl OpenZone {
                 }
                 if let Some(workspace) = self.workspaces.get_mut(&window) {
                     workspace.update(message, &mut self.stores);
+                    if let Some(cmd) = workspace.pending_app_command.take() {
+                        use crate::workspace::workspace_command_palette::CommandId;
+                        if matches!(cmd, CommandId::NewWindow) {
+                            return self.open_additional_workspace();
+                        }
+                    }
                     if let Some(panel) = workspace.take_torn_off_panel() {
                         return self.open_workspace_with_panel(panel);
                     }
@@ -193,6 +200,7 @@ impl OpenZone {
         workspace.set_dock_factory(DockSide::Right, build_conversation_surface);
         workspace.set_dock_factory(DockSide::Bottom, build_output_surface);
         workspace.ensure_scratch_fallback();
+        workspace.all_commands = default_command_items();
         self.workspaces.insert(workspace_window, workspace);
         open.discard()
     }
@@ -214,6 +222,7 @@ impl OpenZone {
                 workspace.set_dock_factory(DockSide::Bottom, build_output_surface);
                 workspace.ensure_scratch_fallback();
                 workspace.populate_empty_docks(&mut self.stores);
+                workspace.all_commands = default_command_items();
                 workspace
             }
             None => build_workspace(&mut self.stores, self.theme_mode),
@@ -562,6 +571,7 @@ fn build_workspace(_stores: &mut AppStores, theme_mode: ThemeMode) -> Workspace 
     workspace.set_dock_factory(DockSide::Left, build_activity_surface);
     workspace.set_dock_factory(DockSide::Right, build_conversation_surface);
     workspace.set_dock_factory(DockSide::Bottom, build_output_surface);
+    workspace.all_commands = default_command_items();
     workspace.ensure_scratch_fallback();
     workspace
 }
@@ -576,6 +586,7 @@ fn build_secondary_workspace(_stores: &mut AppStores, theme_mode: ThemeMode) -> 
     workspace.set_dock_factory(DockSide::Left, build_activity_surface);
     workspace.set_dock_factory(DockSide::Right, build_conversation_surface);
     workspace.set_dock_factory(DockSide::Bottom, build_output_surface);
+    workspace.all_commands = default_command_items();
     workspace.ensure_scratch_fallback();
     workspace
 }

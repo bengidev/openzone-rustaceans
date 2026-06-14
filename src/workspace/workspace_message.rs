@@ -63,6 +63,17 @@ pub enum WorkspaceMessage {
     ConfirmCloseDiscard { location: PanelLocation, tab: usize },
     /// User canceled closing a tab (closes the modal popup)
     ConfirmCloseCancel,
+
+    /// Open or close the command palette.
+    TogglePalette,
+    /// The user typed into the palette's search field.
+    PaletteQueryChanged(String),
+    /// User selected a palette item. The reducer resolves and dispatches the selected command.
+    PaletteSelect,
+    /// Dismiss the palette without selecting a command.
+    PaletteDismiss,
+    /// User clicked a specific palette item.
+    PaletteItemClicked(usize),
 }
 
 impl std::fmt::Debug for WorkspaceMessage {
@@ -109,6 +120,15 @@ impl std::fmt::Debug for WorkspaceMessage {
                 .field("location", location)
                 .field("tab", tab)
                 .finish(),
+            WorkspaceMessage::TogglePalette => write!(f, "TogglePalette"),
+            WorkspaceMessage::PaletteQueryChanged(q) => {
+                write!(f, "PaletteQueryChanged({q:?})")
+            }
+            WorkspaceMessage::PaletteSelect => write!(f, "PaletteSelect"),
+            WorkspaceMessage::PaletteDismiss => write!(f, "PaletteDismiss"),
+            WorkspaceMessage::PaletteItemClicked(i) => {
+                write!(f, "PaletteItemClicked({i})")
+            }
             WorkspaceMessage::ConfirmCloseCancel => f.debug_tuple("ConfirmCloseCancel").finish(),
         }
     }

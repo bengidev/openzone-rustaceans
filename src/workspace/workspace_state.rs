@@ -16,6 +16,7 @@ use iced::{Point, Size, Subscription};
 
 use crate::shared::design::{OpenZoneTheme, ThemeMode};
 use crate::workspace::workspace_command::{Chord, Command, Keymap};
+use crate::workspace::workspace_command_palette::{CommandId, CommandItem, PaletteState};
 use crate::workspace::workspace_dock::{DockVisibility, Docks};
 use crate::workspace::workspace_drag::{
     Direction, DockRegions, DragState, DropTarget, PaneBounds, SplitPaneTarget, TabStripTarget,
@@ -83,6 +84,12 @@ pub struct Workspace {
     bottom_dock_factory: Option<DockSurfaceFactory>,
     /// Optional close confirmation when closing a dirty tab.
     pub close_confirmation: Option<CloseConfirmation>,
+    /// Command palette UI state (open, query, filtered results, selection).
+    pub palette: PaletteState,
+    /// All available command items for palette filtering, seeded by the app root.
+    pub all_commands: Vec<CommandItem>,
+    /// A palette command the app root must execute (e.g. NewWindow). Cleared on read.
+    pub pending_app_command: Option<CommandId>,
 }
 
 /// Default workspace window size — matches `workspace_window_settings` in
@@ -118,6 +125,9 @@ impl Workspace {
             right_dock_factory: None,
             bottom_dock_factory: None,
             close_confirmation: None,
+            palette: PaletteState::new(),
+            all_commands: Vec::new(),
+            pending_app_command: None,
         }
     }
 
@@ -149,6 +159,9 @@ impl Workspace {
             right_dock_factory: None,
             bottom_dock_factory: None,
             close_confirmation: None,
+            palette: PaletteState::new(),
+            all_commands: Vec::new(),
+            pending_app_command: None,
         }
     }
 
@@ -475,6 +488,27 @@ impl Workspace {
             WorkspaceMessage::ConfirmCloseCancel => {
                 self.close_confirmation = None;
             }
+            WorkspaceMessage::TogglePalette => {
+                self.toggle_palette();
+            }
+            WorkspaceMessage::PaletteQueryChanged(q) => {
+                self.palette.query = q;
+                self.palette.filter(&self.all_commands);
+            }
+            WorkspaceMessage::PaletteSelect => {
+                if let Some(cmd) = self.palette.take_selection() {
+                    self.dispatch_palette_command(cmd, stores);
+                }
+            }
+            WorkspaceMessage::PaletteDismiss => {
+                self.palette.dismiss();
+            }
+            WorkspaceMessage::PaletteItemClicked(i) => {
+                self.palette.select_at(i);
+                if let Some(cmd) = self.palette.take_selection() {
+                    self.dispatch_palette_command(cmd, stores);
+                }
+            }
         }
     }
 
@@ -642,13 +676,53 @@ impl Workspace {
         }
     }
 
-    /// Panel-first key routing: the focused panel may swallow a chord;
-    /// otherwise the workspace keymap resolves it to a command.
+    /// Overlay-first key routing: overlay (palette), then panel-first
+    /// capture, then workspace keymap.
     fn handle_key(&mut self, chord: Chord, stores: &mut AppStores) {
+        // --- overlay layer: command palette (modal while open) ---
+        if self.palette.open {
+            if Self::is_palette_toggle_chord(chord) {
+                self.toggle_palette();
+                return;
+            }
+            match chord.key {
+                crate::workspace::workspace_command::KeyRef::Escape => {
+                    self.palette.dismiss();
+                    return;
+                }
+                crate::workspace::workspace_command::KeyRef::Enter => {
+                    if !self.palette.filtered.is_empty()
+                        && let Some(cmd) = self.palette.take_selection()
+                    {
+                        self.dispatch_palette_command(cmd, stores);
+                    }
+                    return;
+                }
+                crate::workspace::workspace_command::KeyRef::ArrowUp => {
+                    self.palette.select_prev();
+                    return;
+                }
+                crate::workspace::workspace_command::KeyRef::ArrowDown => {
+                    self.palette.select_next();
+                    return;
+                }
+                _ => return,
+            }
+        }
+
+        // --- panel layer ---
         if self
             .focused_active_panel()
             .is_some_and(|panel| panel.captures_chord(chord))
         {
+            return;
+        }
+
+        // --- workspace layer ---
+
+        // Cmd+Shift+P toggles the palette (unless a panel consumed it above).
+        if Self::is_palette_toggle_chord(chord) {
+            self.toggle_palette();
             return;
         }
 
@@ -699,6 +773,54 @@ impl Workspace {
         }
     }
 
+    fn is_palette_toggle_chord(chord: Chord) -> bool {
+        matches!(
+            chord,
+            Chord {
+                key: crate::workspace::workspace_command::KeyRef::Char('p'),
+                mods: crate::workspace::workspace_command::Mods {
+                    command: true,
+                    shift: true,
+                    alt: false,
+                },
+            }
+        )
+    }
+
+    fn toggle_palette(&mut self) {
+        if self.palette.open {
+            self.palette.dismiss();
+        } else {
+            self.palette.open = true;
+            self.palette.filter(&self.all_commands);
+        }
+    }
+
+    /// Dispatch a palette command to the workspace or defer to the app root.
+    fn dispatch_palette_command(
+        &mut self,
+        id: crate::workspace::workspace_command_palette::CommandId,
+        stores: &mut AppStores,
+    ) {
+        use crate::workspace::workspace_command_palette::CommandId;
+        match id {
+            CommandId::OpenDock(side) => self.apply_command(Command::OpenDock(side), stores),
+            CommandId::CollapseDock(side) => {
+                self.apply_command(Command::CollapseDock(side), stores)
+            }
+            CommandId::HideDock(side) => self.apply_command(Command::HideDock(side), stores),
+            CommandId::SplitFocused => self.apply_command(Command::SplitFocused, stores),
+            CommandId::CloseActiveTab => self.apply_command(Command::CloseActiveTab, stores),
+            CommandId::ToggleTheme => {
+                self.theme_mode = self.theme_mode.toggle();
+                self.theme = OpenZoneTheme::from_mode(self.theme_mode);
+            }
+            CommandId::NewWindow => {
+                self.pending_app_command = Some(id);
+            }
+        }
+    }
+
     /// Return focus to the first center pane.
     fn return_focus_to_workbench(&mut self) {
         let first_pane = self.panes.iter().next().map(|(pane, _)| *pane);
@@ -723,6 +845,7 @@ impl Workspace {
         if let Some(tab_idx) = tab_index
             && let Some(CloseRequest::Confirm { message }) = close_req
         {
+            self.palette.dismiss();
             self.close_confirmation = Some(CloseConfirmation {
                 location: focused,
                 tab: tab_idx,
@@ -1720,5 +1843,110 @@ mod tests {
         // The dock already had a ClockPanel tab; factory must not add another.
         assert_eq!(workspace.docks.right.tabs.len(), 1);
         assert!(workspace.docks.right.is_open());
+    }
+    #[test]
+    fn toggle_palette_opens_and_filters_commands() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        workspace.all_commands =
+            crate::workspace::workspace_command_palette::default_command_items();
+
+        workspace.update(WorkspaceMessage::TogglePalette, &mut stores);
+
+        assert!(workspace.palette.open);
+        assert_eq!(
+            workspace.palette.filtered.len(),
+            workspace.all_commands.len()
+        );
+    }
+
+    #[test]
+    fn palette_blocks_workspace_shortcuts_while_open() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        workspace.all_commands =
+            crate::workspace::workspace_command_palette::default_command_items();
+        workspace.update(WorkspaceMessage::TogglePalette, &mut stores);
+        let panes_before = workspace.panes.len();
+
+        workspace.update(
+            WorkspaceMessage::Key(Chord::ch('d', Mods::CMD)),
+            &mut stores,
+        );
+
+        assert_eq!(workspace.panes.len(), panes_before);
+        assert!(workspace.palette.open);
+    }
+
+    #[test]
+    fn cmd_shift_p_toggles_palette() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        workspace.all_commands =
+            crate::workspace::workspace_command_palette::default_command_items();
+
+        workspace.update(
+            WorkspaceMessage::Key(Chord::ch('p', Mods::CMD_SHIFT)),
+            &mut stores,
+        );
+        assert!(workspace.palette.open);
+
+        workspace.update(
+            WorkspaceMessage::Key(Chord::ch('p', Mods::CMD_SHIFT)),
+            &mut stores,
+        );
+        assert!(!workspace.palette.open);
+    }
+
+    #[test]
+    fn palette_new_window_sets_pending_app_command() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        workspace.all_commands =
+            crate::workspace::workspace_command_palette::default_command_items();
+        workspace.update(WorkspaceMessage::TogglePalette, &mut stores);
+        workspace.update(
+            WorkspaceMessage::PaletteQueryChanged("new window".into()),
+            &mut stores,
+        );
+        workspace.update(WorkspaceMessage::PaletteItemClicked(0), &mut stores);
+
+        assert_eq!(
+            workspace.pending_app_command,
+            Some(crate::workspace::workspace_command_palette::CommandId::NewWindow)
+        );
+        assert!(!workspace.palette.open);
+    }
+
+    #[test]
+    fn opening_close_confirmation_dismisses_palette() {
+        use crate::features::ScratchMessage;
+        use crate::features::ScratchPanel;
+        use iced::widget::text_editor;
+
+        let mut stores = AppStores::new();
+        let mut workspace = Workspace::single_pane(
+            PaneState::new(vec![Box::new(ScratchPanel::new())]),
+            ThemeMode::Dark,
+        );
+        workspace.all_commands =
+            crate::workspace::workspace_command_palette::default_command_items();
+        let location = only_center_location(&workspace);
+        workspace.update(WorkspaceMessage::TogglePalette, &mut stores);
+        assert!(workspace.palette.open);
+
+        workspace.update(
+            WorkspaceMessage::Panel {
+                location,
+                tab: 0,
+                message: crate::workspace::erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                    text_editor::Edit::Insert('a'),
+                ))),
+            },
+            &mut stores,
+        );
+        workspace.update(
+            WorkspaceMessage::Command(Command::CloseActiveTab),
+            &mut stores,
+        );
+
+        assert!(workspace.close_confirmation.is_some());
+        assert!(!workspace.palette.open);
     }
 }

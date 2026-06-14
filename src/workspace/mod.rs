@@ -17,6 +17,8 @@
 #![allow(unused_imports)]
 
 pub mod workspace_command;
+pub mod workspace_command_palette;
+
 pub mod workspace_dock;
 pub mod workspace_drag;
 pub mod workspace_layout_metrics;
