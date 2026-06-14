@@ -546,7 +546,14 @@ fn tab_strip<'a>(
 
         let active = index == pane_state.active;
         let hovered = workspace.hovered_tab == Some((location, index));
-        tab_elements.push(tab_chip(theme, location, index, panel.as_ref(), active, hovered));
+        tab_elements.push(tab_chip(
+            theme,
+            location,
+            index,
+            panel.as_ref(),
+            active,
+            hovered,
+        ));
     }
 
     let mut tabs_row = row![].spacing(SpacingToken::S1.value());
