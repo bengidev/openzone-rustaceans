@@ -32,7 +32,7 @@ use iced::alignment::Horizontal;
 use iced::widget::canvas::{Frame, Geometry, Program, Stroke};
 use iced::widget::{
     Canvas, PaneGrid, button, canvas, column, container, mouse_area, pane_grid, row, space, stack,
-    text,
+    text, text_input,
 };
 use iced::{Alignment, Background, Border, Color, Element, Length, Point, Rectangle, Size, mouse};
 
@@ -81,6 +81,18 @@ pub fn view<'a>(workspace: &'a Workspace, stores: &'a AppStores) -> Element<'a, 
         } else {
             shell.into()
         };
+
+    // Palette overlay: top-centered dropdown below the title bar.
+    let decorated = if workspace.palette.open {
+        let overlay_elem = palette_overlay(theme, workspace);
+        Element::from(
+            stack![decorated, overlay_elem]
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+    } else {
+        decorated
+    };
 
     if let Some(confirm) = &workspace.close_confirmation {
         let overlay = container(Space::new())
@@ -339,6 +351,20 @@ fn title_bar(theme: OpenZoneTheme) -> Element<'static, WorkspaceMessage> {
         ThemeMode::Light => "Dark",
     };
 
+    let command_center = button(
+        text("Search commands")
+            .size(TypeRole::LabelMd.size())
+            .style(move |_| text::Style {
+                color: Some(theme.foreground(ForegroundToken::Secondary)),
+            }),
+    )
+    .padding([
+        SpacingToken::S1.value() as u16,
+        SpacingToken::S3.value() as u16,
+    ])
+    .on_press(WorkspaceMessage::TogglePalette)
+    .style(move |_, _| tab_button_style(theme, false));
+
     let new_window = button(
         text("New Window")
             .size(TypeRole::LabelMd.size())
@@ -369,6 +395,7 @@ fn title_bar(theme: OpenZoneTheme) -> Element<'static, WorkspaceMessage> {
 
     let bar = row![
         label,
+        command_center,
         space::horizontal().width(Length::Fill),
         new_window,
         theme_toggle,
@@ -874,4 +901,127 @@ fn tab_button_style(theme: OpenZoneTheme, active: bool) -> button::Style {
         },
         ..button::Style::default()
     }
+}
+
+/// Render the command palette as a backdrop + top-centered dropdown.
+fn palette_overlay<'a>(
+    theme: OpenZoneTheme,
+    workspace: &'a Workspace,
+) -> Element<'a, WorkspaceMessage> {
+    let palette = &workspace.palette;
+
+    // Backdrop captures clicks outside the dropdown → dismiss.
+    let backdrop = mouse_area(
+        container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .on_press(WorkspaceMessage::PaletteDismiss);
+    let max_width = 440.0;
+
+    let items: Vec<Element<'_, WorkspaceMessage>> = palette
+        .filtered
+        .iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let is_selected = i == palette.selected;
+            let label = item.label.to_string();
+            let btn = button(
+                text(label)
+                    .size(TypeRole::LabelMd.size())
+                    .width(Length::Fill),
+            )
+            .width(Length::Fill)
+            .padding([
+                SpacingToken::S1.value() as u16,
+                SpacingToken::S2.value() as u16,
+            ])
+            .on_press(WorkspaceMessage::PaletteItemClicked(i))
+            .style(move |_, _| {
+                let bg = if is_selected {
+                    theme.background(BackgroundToken::Elevated)
+                } else {
+                    Color::TRANSPARENT
+                };
+                button::Style {
+                    background: Some(Background::Color(bg)),
+                    text_color: theme.foreground(ForegroundToken::Primary),
+                    border: Border::default(),
+                    ..button::Style::default()
+                }
+            });
+            Element::from(btn)
+        })
+        .collect();
+
+    let list = column(items).width(Length::Fill);
+
+    let result_count = if palette.filtered.is_empty() {
+        text("No matching commands")
+            .size(TypeRole::LabelMd.size())
+            .style(move |_| text::Style {
+                color: Some(theme.foreground(ForegroundToken::Secondary)),
+            })
+    } else {
+        text(format!(
+            "{}/{}",
+            palette.selected + 1,
+            palette.filtered.len()
+        ))
+        .size(TypeRole::LabelMd.size())
+        .style(move |_| text::Style {
+            color: Some(theme.foreground(ForegroundToken::Secondary)),
+        })
+    };
+
+    let dropdown = column![
+        // Search text input
+        text_input("Type to filter commands...", &palette.query)
+            .on_input(|q| WorkspaceMessage::PaletteQueryChanged(q))
+            .padding([
+                SpacingToken::S1.value() as u16,
+                SpacingToken::S1.value() as u16,
+            ])
+            .width(Length::Fill),
+        // Divider
+        container(Space::new().height(Length::Fixed(1.0)))
+            .width(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(theme.border(BorderToken::Subtle),)),
+                ..container::Style::default()
+            }),
+        list,
+        container(result_count)
+            .width(Length::Fill)
+            .align_x(Horizontal::Right)
+            .padding([
+                SpacingToken::S1.value() as u16,
+                SpacingToken::S1.value() as u16,
+            ]),
+    ]
+    .spacing(SpacingToken::Hairline.value())
+    .width(Length::Fixed(max_width));
+
+    let dropdown_card = container(dropdown).style(move |_| container::Style {
+        background: Some(Background::Color(
+            theme.background(BackgroundToken::Primary),
+        )),
+        border: Border {
+            color: theme.border(BorderToken::Strong),
+            width: 1.0,
+            radius: RadiusToken::Md.value().into(),
+        },
+        ..container::Style::default()
+    });
+
+    let positioned = container(dropdown_card)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Horizontal::Center)
+        .padding(SpacingToken::S3.value() as u16);
+
+    stack![backdrop, positioned]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }

@@ -78,6 +78,9 @@ pub enum KeyRef {
     Char(char),
     Backspace,
     Escape,
+    Enter,
+    ArrowUp,
+    ArrowDown,
 }
 
 /// A fully-qualified key chord: a key plus its modifier set.
@@ -178,6 +181,9 @@ pub fn chord_from_keyboard_event(event: &iced::keyboard::Event) -> Option<Chord>
     let key_ref = match key.as_ref() {
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => KeyRef::Backspace,
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => KeyRef::Escape,
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => KeyRef::Enter,
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp) => KeyRef::ArrowUp,
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown) => KeyRef::ArrowDown,
         iced::keyboard::Key::Character(_) => {
             let character = key.to_latin(*physical_key)?;
             KeyRef::Char(character.to_ascii_lowercase())
