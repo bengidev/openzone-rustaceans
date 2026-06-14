@@ -81,7 +81,7 @@ impl PaletteState {
                 .cloned()
                 .collect();
         }
-        self.selected = if self.filtered.is_empty() { 0 } else { 0 };
+        self.selected = 0;
     }
 
     /// Move selection up (wraps).

@@ -977,7 +977,7 @@ fn palette_overlay<'a>(
     let dropdown = column![
         // Search text input
         text_input("Type to filter commands...", &palette.query)
-            .on_input(|q| WorkspaceMessage::PaletteQueryChanged(q))
+            .on_input(WorkspaceMessage::PaletteQueryChanged)
             .padding([
                 SpacingToken::S1.value() as u16,
                 SpacingToken::S1.value() as u16,
