@@ -54,6 +54,10 @@ pub struct DirtyPanel {
 }
 
 /// Close confirmation overlay state — single tab or a batch of dirty tabs.
+///
+/// Window- and app-level batch close prompts are owned by the composition
+/// root (`AppClosePrompt` in `main.rs`). `Batch` exists for workspace-local
+/// discard flows and unit tests.
 #[derive(Debug, Clone)]
 pub enum CloseConfirmation {
     Tab {

@@ -480,6 +480,10 @@ impl OpenZone {
             self.pending_close_windows.push(id);
         }
 
+        self.schedule_pending_close_evaluation()
+    }
+
+    fn schedule_pending_close_evaluation(&mut self) -> Task<Message> {
         if self.close_eval_scheduled {
             return Task::none();
         }
@@ -503,22 +507,33 @@ impl OpenZone {
         }
 
         let mut batch = Task::none();
+        let mut dirty_windows = Vec::new();
+
         for id in pending {
-            batch = Task::batch([batch, self.prompt_or_close_window(id)]);
-        }
-        batch
-    }
-
-    fn prompt_or_close_window(&mut self, id: window::Id) -> Task<Message> {
-        let dirty = self
-            .workspaces
-            .get(&id)
-            .map(Workspace::collect_dirty_panels)
-            .unwrap_or_default();
-        if dirty.is_empty() {
-            return self.force_close_workspace(id);
+            let dirty = self
+                .workspaces
+                .get(&id)
+                .map(Workspace::collect_dirty_panels)
+                .unwrap_or_default();
+            if dirty.is_empty() {
+                batch = Task::batch([batch, self.force_close_workspace(id)]);
+            } else {
+                dirty_windows.push((id, dirty));
+            }
         }
 
+        if dirty_windows.is_empty() {
+            return batch;
+        }
+
+        // Prompt one dirty window at a time so earlier prompts are not overwritten.
+        for (id, _) in dirty_windows.iter().skip(1) {
+            if !self.pending_close_windows.contains(id) {
+                self.pending_close_windows.push(*id);
+            }
+        }
+
+        let (id, dirty) = dirty_windows.remove(0);
         if let Some(workspace) = self.workspaces.get_mut(&id) {
             workspace.palette.dismiss();
         }
@@ -526,7 +541,7 @@ impl OpenZone {
             target_window: id,
             panels: dirty,
         });
-        Task::none()
+        Task::batch([batch, Task::none()])
     }
 
     fn prompt_app_quit(&mut self) -> Task<Message> {
@@ -574,7 +589,7 @@ impl OpenZone {
             return Task::none();
         };
 
-        match prompt {
+        let mut batch = match prompt {
             AppClosePrompt::Window {
                 target_window,
                 panels,
@@ -600,15 +615,19 @@ impl OpenZone {
                     }
                 }
                 let windows: Vec<window::Id> = self.workspaces.keys().copied().collect();
-                let mut batch = Task::none();
+                let mut quit_batch = Task::none();
                 for id in windows {
-                    batch = Task::batch([batch, self.force_close_workspace(id)]);
+                    quit_batch = Task::batch([quit_batch, self.force_close_workspace(id)]);
                 }
-                batch
+                quit_batch
             }
-        }
-    }
+        };
 
+        if !self.pending_close_windows.is_empty() {
+            batch = Task::batch([batch, self.schedule_pending_close_evaluation()]);
+        }
+        batch
+    }
     fn save_primary_layout_if_needed(&mut self, id: window::Id) {
         if self.primary_window != Some(id) {
             return;
@@ -1329,6 +1348,39 @@ mod cross_window_tab_drop_tests {
 }
 
 #[cfg(test)]
+struct CountingLayoutStore {
+    saves: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(test)]
+impl CountingLayoutStore {
+    fn new() -> Self {
+        Self {
+            saves: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn save_count(&self) -> usize {
+        self.saves.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+impl LayoutStore for CountingLayoutStore {
+    fn load(&self) -> Option<workspace::LayoutSnapshot> {
+        None
+    }
+
+    fn save(
+        &self,
+        _snapshot: &workspace::LayoutSnapshot,
+    ) -> Result<(), workspace::LayoutStoreError> {
+        self.saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod window_close_guard_tests {
     use super::*;
     use crate::features::ScratchMessage;
@@ -1372,7 +1424,7 @@ mod window_close_guard_tests {
     }
 
     #[test]
-    fn close_requested_with_dirty_opens_window_prompt() {
+    fn close_requested_with_dirty_opens_app_quit_prompt() {
         let (mut app, window_id) = open_zone_with_dirty_scratch();
         let _ = app.on_window_close_requested(window_id);
         let _ = app.evaluate_pending_closes();
@@ -1404,6 +1456,92 @@ mod window_close_guard_tests {
 
         assert!(app.app_close_prompt.is_none());
         assert!(app.workspaces[&window_id].collect_dirty_panels().is_empty());
+    }
+
+    #[test]
+    fn partial_multi_window_dirty_close_prompts_sequentially() {
+        let (mut app, window_a) = open_zone_with_dirty_scratch();
+        let window_b = window::Id::unique();
+        let mut stores = AppStores::new();
+        let mut workspace_b = build_secondary_workspace(&mut stores, ThemeMode::Dark);
+        let location = workspace_b.focused;
+        workspace_b.update(
+            WorkspaceMessage::Panel {
+                location,
+                tab: 0,
+                message: erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                    text_editor::Edit::Insert('y'),
+                ))),
+            },
+            &mut stores,
+        );
+        app.workspaces.insert(window_b, workspace_b);
+        app.stores = stores;
+        app.register_window_ordinal(window_b);
+
+        let _ = app.on_window_close_requested(window_a);
+        let _ = app.on_window_close_requested(window_b);
+        let _ = app.evaluate_pending_closes();
+
+        assert!(matches!(
+            app.app_close_prompt,
+            Some(AppClosePrompt::Window {
+                target_window,
+                ref panels,
+                ..
+            }) if target_window == window_a && panels.len() == 1
+        ));
+        assert_eq!(app.pending_close_windows, vec![window_b]);
+
+        let _ = app.confirm_app_close_discard();
+
+        assert!(matches!(
+            app.app_close_prompt,
+            Some(AppClosePrompt::Window {
+                target_window,
+                ref panels,
+                ..
+            }) if target_window == window_b && panels.len() == 1
+        ));
+        assert!(app.pending_close_windows.is_empty());
+        assert!(app.workspaces.contains_key(&window_a));
+        assert!(app.workspaces[&window_b].collect_dirty_panels().len() == 1);
+    }
+
+    #[test]
+    fn primary_layout_saved_only_on_primary_close() {
+        let primary_id = window::Id::unique();
+        let secondary_id = window::Id::unique();
+        let layout_store = Arc::new(CountingLayoutStore::new());
+        let mut stores = AppStores::new();
+        let primary_workspace = build_workspace(&mut stores, ThemeMode::Dark);
+        let secondary_workspace = build_secondary_workspace(&mut stores, ThemeMode::Dark);
+
+        let mut app = OpenZone {
+            onboarding: None,
+            onboarding_window: None,
+            workspaces: HashMap::from([
+                (primary_id, primary_workspace),
+                (secondary_id, secondary_workspace),
+            ]),
+            stores,
+            persistence: Arc::new(InMemoryOnboardingPersistence::new()),
+            registry: build_registry(),
+            layout_store: layout_store.clone(),
+            theme_mode: ThemeMode::Dark,
+            primary_window: Some(primary_id),
+            window_ordinals: HashMap::from([(primary_id, 1), (secondary_id, 2)]),
+            next_window_ordinal: 2,
+            pending_close_windows: Vec::new(),
+            close_eval_scheduled: false,
+            app_close_prompt: None,
+        };
+
+        let _ = app.force_close_workspace(secondary_id);
+        assert_eq!(layout_store.save_count(), 0);
+
+        let _ = app.force_close_workspace(primary_id);
+        assert_eq!(layout_store.save_count(), 1);
     }
 
     #[test]
