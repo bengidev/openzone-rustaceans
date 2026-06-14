@@ -17,7 +17,9 @@ use crate::shared::design::{
 };
 use crate::workspace::workspace_dock::{Dock, DockVisibility};
 use crate::workspace::workspace_drag as drag;
-use crate::workspace::workspace_layout_metrics::{self as layout_metrics, DOCK_RAIL_THICKNESS};
+use crate::workspace::workspace_layout_metrics::{
+    self as layout_metrics, DOCK_RAIL_THICKNESS, title_bar_height,
+};
 use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_message::WorkspaceMessage;
 use crate::workspace::workspace_pane_state::PaneState;
@@ -32,7 +34,9 @@ use iced::widget::{
     Canvas, PaneGrid, button, canvas, column, container, mouse_area, pane_grid, row, scrollable,
     space, stack, text, text_input,
 };
-use iced::{Alignment, Background, Border, Color, Element, Length, Point, Rectangle, Size, mouse};
+use iced::{
+    Alignment, Background, Border, Color, Element, Length, Padding, Point, Rectangle, Size, mouse,
+};
 
 /// Render the whole workspace shell as a view over `stores`.
 ///
@@ -186,16 +190,6 @@ fn dock_side<'a>(
         return container(body)
             .width(Length::Fixed(dock.extent))
             .height(Length::Fill)
-            .style(move |_| {
-                pane_frame_style(
-                    theme,
-                    if focused {
-                        BorderToken::Strong
-                    } else {
-                        BorderToken::Default
-                    },
-                )
-            })
             .into();
     }
 
@@ -224,16 +218,6 @@ fn dock_bottom<'a>(
         return container(body)
             .width(Length::Fill)
             .height(Length::Fixed(dock.extent))
-            .style(move |_| {
-                pane_frame_style(
-                    theme,
-                    if focused {
-                        BorderToken::Strong
-                    } else {
-                        BorderToken::Default
-                    },
-                )
-            })
             .into();
     }
 
@@ -405,14 +389,7 @@ fn status_bar(theme: OpenZoneTheme, workspace: &Workspace) -> Element<'_, Worksp
             color: Some(theme.foreground(ForegroundToken::Secondary)),
         });
 
-    let dock_controls = row![
-        dock_control_button(theme, DockSide::Left, workspace, "Activity"),
-        dock_control_button(theme, DockSide::Right, workspace, "Conversation"),
-        dock_control_button(theme, DockSide::Bottom, workspace, "Output"),
-    ];
-
-    // Layout: left segment fills, right segment shrinks
-    let bar = row![container(label).width(Length::Fill), dock_controls,]
+    let bar = row![container(label).width(Length::Fill)]
         .width(Length::Fill)
         .align_y(Alignment::Center)
         .padding(SpacingToken::S2.value());
@@ -423,66 +400,45 @@ fn status_bar(theme: OpenZoneTheme, workspace: &Workspace) -> Element<'_, Worksp
         .into()
 }
 
-fn dock_control_button<'a>(
+fn dock_strip_controls<'a>(
     theme: OpenZoneTheme,
     side: DockSide,
     workspace: &Workspace,
-    label: &'static str,
-) -> Element<'a, WorkspaceMessage> {
+) -> Option<Element<'a, WorkspaceMessage>> {
     let dock = workspace.docks.get(side);
+    if dock.visibility != DockVisibility::Open {
+        return None;
+    }
+
     use crate::workspace::workspace_command::Command;
 
-    let is_empty = dock.is_empty();
-    let visibility = dock.visibility;
-
-    // Color based on visibility state
-    let color = match visibility {
-        DockVisibility::Open => theme.foreground(ForegroundToken::Accent),
-        DockVisibility::Collapsed => theme.foreground(ForegroundToken::Secondary),
-        DockVisibility::Hidden => theme.foreground(ForegroundToken::Muted),
+    let compact_button = |label: &'static str, message: WorkspaceMessage| {
+        button(
+            text(label)
+                .size(TypeRole::LabelMd.size())
+                .style(move |_| text::Style {
+                    color: Some(theme.foreground(ForegroundToken::Secondary)),
+                }),
+        )
+        .padding(SpacingToken::S1.value() as u16)
+        .on_press(message)
+        .style(move |_, _| button::Style {
+            background: Some(Background::Color(Color::TRANSPARENT)),
+            text_color: theme.foreground(ForegroundToken::Secondary),
+            border: Border::default(),
+            ..button::Style::default()
+        })
     };
 
-    // Label with state indicator
-    let display_label = match visibility {
-        DockVisibility::Open => format!("▾ {label}"),
-        DockVisibility::Collapsed => format!("▸ {label}"),
-        DockVisibility::Hidden => label.to_string(),
-    };
-
-    let btn = button(
-        text(display_label)
-            .size(TypeRole::MonoSm.size())
-            .style(move |_| text::Style { color: Some(color) }),
+    Some(
+        row![
+            compact_button("▾", WorkspaceMessage::Command(Command::CollapseDock(side))),
+            compact_button("×", WorkspaceMessage::Command(Command::HideDock(side))),
+        ]
+        .spacing(SpacingToken::S1.value())
+        .align_y(Alignment::Center)
+        .into(),
     )
-    .padding([
-        SpacingToken::S1.value() as u16,
-        SpacingToken::S2.value() as u16,
-    ])
-    .style(move |_, _| button::Style {
-        background: Some(Background::Color(Color::TRANSPARENT)),
-        border: Border {
-            color: if visibility == DockVisibility::Open {
-                theme.foreground(ForegroundToken::Accent)
-            } else {
-                Color::TRANSPARENT
-            },
-            width: 1.0,
-            radius: RadiusToken::Sm.value().into(),
-        },
-        ..button::Style::default()
-    });
-
-    // Disabled only when neither an existing tab nor a default surface factory exists.
-    let has_content = !is_empty || workspace.has_dock_factory(side);
-    if !has_content && !dock.is_open() {
-        btn.into()
-    } else if visibility == DockVisibility::Open {
-        btn.on_press(WorkspaceMessage::Command(Command::HideDock(side)))
-            .into()
-    } else {
-        btn.on_press(WorkspaceMessage::Command(Command::OpenDock(side)))
-            .into()
-    }
 }
 
 /// Wrap a dock body so a click anywhere in it moves focus to that dock.
@@ -509,7 +465,7 @@ fn pane_body<'a>(
     stores: &'a AppStores,
     workspace: &'a Workspace,
 ) -> Element<'a, WorkspaceMessage> {
-    let strip = tab_strip(theme, location, pane_state, workspace);
+    let strip = tab_strip(theme, location, pane_state, workspace, focused);
 
     let content: Element<'a, WorkspaceMessage> = match pane_state.active_panel() {
         Some(panel) => {
@@ -539,16 +495,10 @@ fn pane_body<'a>(
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let border_token = if focused {
-        BorderToken::Strong
-    } else {
-        BorderToken::Default
-    };
-
     container(inner)
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(move |_| pane_frame_style(theme, border_token))
+        .style(move |_| focused_frame_style(theme, focused))
         .into()
 }
 
@@ -558,7 +508,13 @@ fn tab_strip<'a>(
     location: PanelLocation,
     pane_state: &'a PaneState,
     workspace: &'a Workspace,
+    focused: bool,
 ) -> Element<'a, WorkspaceMessage> {
+    let dock_side = match location {
+        PanelLocation::Dock(side) => Some(side),
+        PanelLocation::Center(_) => None,
+    };
+
     let drag_source_tab = workspace
         .drag_state
         .as_ref()
@@ -571,6 +527,8 @@ fn tab_strip<'a>(
         }
 
         let active = index == pane_state.active;
+        let hovered = workspace.hovered_tab == Some((location, index));
+        let show_close = active || hovered;
         let display_title = if panel.is_dirty() {
             format!("• {}", panel.title())
         } else {
@@ -587,7 +545,31 @@ fn tab_strip<'a>(
                     }),
                 });
 
-        let tab_body = container(label)
+        let mut chip_row = row![label].align_y(Alignment::Center);
+        if show_close {
+            let close =
+                button(
+                    text("×")
+                        .size(TypeRole::LabelMd.size())
+                        .style(move |_| text::Style {
+                            color: Some(theme.foreground(ForegroundToken::Secondary)),
+                        }),
+                )
+                .padding(SpacingToken::S1.value() as u16)
+                .on_press(WorkspaceMessage::TabCloseRequested {
+                    location,
+                    tab: index,
+                })
+                .style(move |_, _| button::Style {
+                    background: Some(Background::Color(Color::TRANSPARENT)),
+                    text_color: theme.foreground(ForegroundToken::Secondary),
+                    border: Border::default(),
+                    ..button::Style::default()
+                });
+            chip_row = chip_row.push(close);
+        }
+
+        let tab_body = container(chip_row)
             .padding([
                 SpacingToken::S1.value() as u16,
                 SpacingToken::S3.value() as u16,
@@ -596,6 +578,10 @@ fn tab_strip<'a>(
 
         tab_elements.push(
             mouse_area(tab_body)
+                .on_enter(WorkspaceMessage::TabHoverChanged {
+                    location: Some((location, index)),
+                })
+                .on_exit(WorkspaceMessage::TabHoverChanged { location: None })
                 .on_press(WorkspaceMessage::TabDragStarted {
                     location,
                     tab: index,
@@ -605,16 +591,42 @@ fn tab_strip<'a>(
         );
     }
 
-    let mut strip = row![].spacing(SpacingToken::S1.value());
+    let mut strip = row![]
+        .spacing(SpacingToken::S1.value())
+        .align_y(Alignment::Center);
     for tab in tab_elements {
         strip = strip.push(tab);
     }
 
+    if let Some(side) = dock_side
+        && let Some(controls) = dock_strip_controls(theme, side, workspace)
+    {
+        strip = strip.push(controls);
+    }
+
+    let scrollable_strip = scrollable(strip).width(Length::Fill).horizontal();
+
+    let bar_border = if focused {
+        theme.foreground(ForegroundToken::Accent)
+    } else {
+        theme.border(BorderToken::Default)
+    };
+
     container(
-        container(strip)
-            .width(Length::Shrink)
+        container(scrollable_strip)
+            .width(Length::Fill)
             .padding(SpacingToken::S1.value())
-            .style(move |_| bar_style(theme, BackgroundToken::Tertiary)),
+            .style(move |_| container::Style {
+                background: Some(Background::Color(
+                    theme.background(BackgroundToken::Tertiary),
+                )),
+                border: Border {
+                    color: bar_border,
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..container::Style::default()
+            }),
     )
     .width(Length::Fill)
     .align_x(Horizontal::Left)
@@ -640,18 +652,18 @@ fn bar_style(theme: OpenZoneTheme, token: BackgroundToken) -> container::Style {
     }
 }
 
-fn pane_frame_style(theme: OpenZoneTheme, border_token: BorderToken) -> container::Style {
+fn focused_frame_style(theme: OpenZoneTheme, focused: bool) -> container::Style {
     container::Style {
         background: Some(Background::Color(
             theme.background(BackgroundToken::Secondary),
         )),
         border: Border {
-            color: theme.border(border_token),
-            width: if border_token == BorderToken::Strong {
-                2.0
+            color: if focused {
+                theme.foreground(ForegroundToken::Accent)
             } else {
-                1.0
+                theme.border(BorderToken::Default)
             },
+            width: if focused { 2.0 } else { 1.0 },
             radius: RadiusToken::Xs.value().into(),
         },
         ..container::Style::default()
@@ -750,15 +762,6 @@ impl<Message> Program<Message> for DropOverlay {
             && rect.width > 0.0
             && rect.height > 0.0
         {
-            let fill = Color {
-                a: 0.18,
-                ..self.accent
-            };
-            frame.fill_rectangle(
-                Point::new(rect.x, rect.y),
-                Size::new(rect.width, rect.height),
-                fill,
-            );
             frame.stroke_rectangle(
                 Point::new(rect.x, rect.y),
                 Size::new(rect.width, rect.height),
@@ -767,11 +770,6 @@ impl<Message> Program<Message> for DropOverlay {
         }
 
         if let Some(ghost) = &self.ghost {
-            let ghost_fill = Color {
-                a: 0.92,
-                ..self.elevated
-            };
-            frame.fill_rectangle(ghost.position, ghost.size, ghost_fill);
             frame.stroke_rectangle(
                 ghost.position,
                 ghost.size,
@@ -843,20 +841,13 @@ fn tab_button_style(theme: OpenZoneTheme, active: bool) -> button::Style {
     }
 }
 
-/// Render the command palette as a backdrop + top-centered dropdown.
+/// Render the command palette as a top-centered dropdown below the title bar.
 fn palette_overlay<'a>(
     theme: OpenZoneTheme,
     workspace: &'a Workspace,
 ) -> Element<'a, WorkspaceMessage> {
     let palette = &workspace.palette;
 
-    // Backdrop captures clicks outside the dropdown → dismiss.
-    let backdrop = mouse_area(
-        container(Space::new())
-            .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .on_press(WorkspaceMessage::PaletteDismiss);
     let max_width = 440.0;
 
     let items: Vec<Element<'_, WorkspaceMessage>> = palette
@@ -954,16 +945,20 @@ fn palette_overlay<'a>(
         ..container::Style::default()
     });
 
+    let top_pad = title_bar_height() + SpacingToken::S3.value();
     let positioned = container(dropdown_card)
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(Horizontal::Center)
-        .padding(SpacingToken::S3.value() as u16);
+        .align_y(iced::alignment::Vertical::Top)
+        .padding(
+            iced::Padding::ZERO
+                .top(top_pad)
+                .left(SpacingToken::S3.value())
+                .right(SpacingToken::S3.value()),
+        );
 
-    stack![backdrop, positioned]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    positioned.into()
 }
 
 const CLOSE_PROMPT_LIST_MAX_HEIGHT: f32 = 160.0;
