@@ -32,29 +32,39 @@ pub enum DockVisibility {
     Open,
 }
 
+/// Default open width for left/right docks. Kept in sync with [`SIDE_DOCK_WIDTH`].
+const DEFAULT_SIDE_EXTENT: f32 = 280.0;
+/// Default open height for the bottom dock. Kept in sync with [`BOTTOM_DOCK_HEIGHT`].
+const DEFAULT_BOTTOM_EXTENT: f32 = 200.0;
+
 /// One edge dock: a tab stack plus its visibility state.
 pub struct Dock {
     /// The dock's tabbed content, sharing the center pane model.
     pub tabs: PaneState,
     /// Whether the dock body, rail, or nothing is shown.
     pub visibility: DockVisibility,
+    /// Remembered open width (side docks) or height (bottom dock).
+    pub extent: f32,
 }
 
 impl Dock {
     /// Build a dock from its tabs. Docks start hidden so the shell
     /// opens to the center workspace; the user reveals docks on demand.
     pub fn new(tabs: PaneState) -> Self {
-        Self {
-            tabs,
-            visibility: DockVisibility::Hidden,
-        }
+        Self::with_extent(tabs, DockVisibility::Hidden, DEFAULT_SIDE_EXTENT)
     }
 
     /// Build a dock that starts open.
     pub fn open_with(tabs: PaneState) -> Self {
+        Self::with_extent(tabs, DockVisibility::Open, DEFAULT_SIDE_EXTENT)
+    }
+
+    /// Build a dock with an explicit remembered open extent.
+    pub fn with_extent(tabs: PaneState, visibility: DockVisibility, extent: f32) -> Self {
         Self {
             tabs,
-            visibility: DockVisibility::Open,
+            visibility,
+            extent,
         }
     }
 
@@ -117,7 +127,7 @@ impl Docks {
         Self {
             left: Dock::new(left),
             right: Dock::new(right),
-            bottom: Dock::new(bottom),
+            bottom: Dock::with_extent(bottom, DockVisibility::Hidden, DEFAULT_BOTTOM_EXTENT),
         }
     }
 
@@ -127,7 +137,11 @@ impl Docks {
         Self {
             left: Dock::new(PaneState::empty()),
             right: Dock::new(PaneState::empty()),
-            bottom: Dock::new(PaneState::empty()),
+            bottom: Dock::with_extent(
+                PaneState::empty(),
+                DockVisibility::Hidden,
+                DEFAULT_BOTTOM_EXTENT,
+            ),
         }
     }
 

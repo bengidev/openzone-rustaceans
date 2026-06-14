@@ -84,7 +84,7 @@ pub fn dock_horizontal_extent(dock: &Dock) -> f32 {
     if dock.is_empty() || dock.is_hidden() {
         0.0
     } else if dock.is_open() {
-        SIDE_DOCK_WIDTH
+        dock.extent
     } else {
         // Collapsed
         DOCK_RAIL_THICKNESS
@@ -95,7 +95,7 @@ fn dock_bottom_extent(dock: &Dock) -> f32 {
     if dock.is_empty() || dock.is_hidden() {
         0.0
     } else if dock.is_open() {
-        BOTTOM_DOCK_HEIGHT
+        dock.extent
     } else {
         // Collapsed
         DOCK_RAIL_THICKNESS

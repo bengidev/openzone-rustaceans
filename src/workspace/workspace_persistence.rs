@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::shared::design::ThemeMode;
 use crate::workspace::workspace_dock::{Dock, DockVisibility, Docks};
+use crate::workspace::workspace_layout_metrics::{BOTTOM_DOCK_HEIGHT, SIDE_DOCK_WIDTH};
 use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_pane_state::PaneState;
 use crate::workspace::workspace_panel::{Panel, PanelKind};
@@ -77,11 +78,21 @@ pub enum CenterNode {
     Pane(PaneSnapshot),
 }
 
+fn default_extent_for_side(side: DockSide) -> f32 {
+    match side {
+        DockSide::Bottom => BOTTOM_DOCK_HEIGHT,
+        DockSide::Left | DockSide::Right => SIDE_DOCK_WIDTH,
+    }
+}
+
 /// One edge dock's persisted state: its tab stack plus tri-state visibility.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockSnapshot {
     pub tabs: PaneSnapshot,
     pub visibility: DockVisibility,
+    /// Omitted in older snapshots; restore applies a side-specific default.
+    #[serde(default)]
+    pub extent: Option<f32>,
 }
 
 /// The persisted focus location. Center focus is stored as a *leaf
@@ -217,6 +228,7 @@ fn capture_dock(dock: &Dock, stores: &AppStores) -> DockSnapshot {
     DockSnapshot {
         tabs: capture_pane(&dock.tabs, stores),
         visibility: dock.visibility,
+        extent: Some(dock.extent),
     }
 }
 
@@ -254,9 +266,9 @@ pub fn restore(
     };
 
     let docks = Docks {
-        left: restore_dock(&snapshot.left, registry, stores),
-        right: restore_dock(&snapshot.right, registry, stores),
-        bottom: restore_dock(&snapshot.bottom, registry, stores),
+        left: restore_dock(&snapshot.left, registry, stores, DockSide::Left),
+        right: restore_dock(&snapshot.right, registry, stores, DockSide::Right),
+        bottom: restore_dock(&snapshot.bottom, registry, stores, DockSide::Bottom),
     };
 
     Workspace::from_parts(panes, docks, focused, theme_mode)
@@ -296,11 +308,20 @@ fn restore_pane(
     pane_state
 }
 
-fn restore_dock(snapshot: &DockSnapshot, registry: &PanelRegistry, stores: &mut AppStores) -> Dock {
-    Dock {
-        tabs: restore_pane(&snapshot.tabs, registry, stores),
-        visibility: snapshot.visibility,
-    }
+fn restore_dock(
+    snapshot: &DockSnapshot,
+    registry: &PanelRegistry,
+    stores: &mut AppStores,
+    side: DockSide,
+) -> Dock {
+    let extent = snapshot
+        .extent
+        .unwrap_or_else(|| default_extent_for_side(side));
+    Dock::with_extent(
+        restore_pane(&snapshot.tabs, registry, stores),
+        snapshot.visibility,
+        extent,
+    )
 }
 
 #[cfg(test)]
@@ -461,6 +482,86 @@ mod tests {
 
         assert!(restored.docks.right.is_open());
         assert_eq!(restored.focused, PanelLocation::Dock(DockSide::Right));
+    }
+
+    #[test]
+    fn capture_restore_preserves_dock_extent() {
+        let (mut workspace, stores) = seeded_workspace();
+        workspace.docks.right.extent = 350.0;
+        workspace.docks.bottom.extent = 150.0;
+
+        let snapshot = capture(&workspace, &stores);
+        let mut restored_stores = AppStores::new();
+        let restored = restore(
+            &snapshot,
+            &test_registry(),
+            &mut restored_stores,
+            ThemeMode::Dark,
+        );
+
+        assert_eq!(restored.docks.right.extent, 350.0);
+        assert_eq!(restored.docks.bottom.extent, 150.0);
+    }
+
+    #[test]
+    fn dock_snapshot_deserializes_without_extent_field() {
+        let json = r#"{"tabs":{"tabs":[],"active":0},"visibility":"Hidden"}"#;
+        let snap: DockSnapshot = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(snap.extent, None);
+    }
+
+    #[test]
+    fn restore_applies_side_specific_default_extent_when_missing() {
+        let snapshot = LayoutSnapshot {
+            center: CenterNode::Pane(PaneSnapshot {
+                tabs: vec![PanelHandle {
+                    kind: PanelKind::Text,
+                    snapshot: serde_json::json!({}),
+                }],
+                active: 0,
+            }),
+            left: DockSnapshot {
+                tabs: PaneSnapshot {
+                    tabs: Vec::new(),
+                    active: 0,
+                },
+                visibility: DockVisibility::Hidden,
+                extent: None,
+            },
+            right: DockSnapshot {
+                tabs: PaneSnapshot {
+                    tabs: Vec::new(),
+                    active: 0,
+                },
+                visibility: DockVisibility::Hidden,
+                extent: None,
+            },
+            bottom: DockSnapshot {
+                tabs: PaneSnapshot {
+                    tabs: Vec::new(),
+                    active: 0,
+                },
+                visibility: DockVisibility::Hidden,
+                extent: None,
+            },
+            focus: FocusSnapshot::Center(0),
+        };
+
+        let mut stores = AppStores::new();
+        let restored = restore(&snapshot, &test_registry(), &mut stores, ThemeMode::Dark);
+
+        assert_eq!(
+            restored.docks.left.extent,
+            crate::workspace::workspace_layout_metrics::SIDE_DOCK_WIDTH
+        );
+        assert_eq!(
+            restored.docks.right.extent,
+            crate::workspace::workspace_layout_metrics::SIDE_DOCK_WIDTH
+        );
+        assert_eq!(
+            restored.docks.bottom.extent,
+            crate::workspace::workspace_layout_metrics::BOTTOM_DOCK_HEIGHT
+        );
     }
 
     #[test]

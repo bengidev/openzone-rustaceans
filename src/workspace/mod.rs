@@ -46,7 +46,7 @@ pub use workspace_panel::{
 };
 pub use workspace_persistence::{LayoutSnapshot, capture, restore};
 pub use workspace_registry::{PanelConstructor, PanelRegistry};
-pub use workspace_state::{CrossWindowDropPreview, DockSurfaceFactory, Workspace};
+pub use workspace_state::{CrossWindowDropPreview, DirtyPanel, DockSurfaceFactory, Workspace};
 pub use workspace_stores::AppStores;
 #[cfg(test)]
 pub use workspace_stores::{ClockStore, CounterId, CounterStore};

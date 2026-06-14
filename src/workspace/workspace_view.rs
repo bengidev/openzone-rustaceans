@@ -17,22 +17,20 @@ use crate::shared::design::{
 };
 use crate::workspace::workspace_dock::{Dock, DockVisibility};
 use crate::workspace::workspace_drag as drag;
-use crate::workspace::workspace_layout_metrics::{
-    self as layout_metrics, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, SIDE_DOCK_WIDTH,
-};
+use crate::workspace::workspace_layout_metrics::{self as layout_metrics, DOCK_RAIL_THICKNESS};
 use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_message::WorkspaceMessage;
 use crate::workspace::workspace_pane_state::PaneState;
 use crate::workspace::workspace_panel::{
     CloseRequest, ErasedMessage, Panel, PanelKind, StatusSink,
 };
-use crate::workspace::workspace_state::Workspace;
+use crate::workspace::workspace_state::{CloseConfirmation, Workspace};
 use crate::workspace::workspace_stores::AppStores;
 use iced::alignment::Horizontal;
 use iced::widget::canvas::{Frame, Geometry, Program, Stroke};
 use iced::widget::{
-    Canvas, PaneGrid, button, canvas, column, container, mouse_area, pane_grid, row, space, stack,
-    text, text_input,
+    Canvas, PaneGrid, button, canvas, column, container, mouse_area, pane_grid, row, scrollable,
+    space, stack, text, text_input,
 };
 use iced::{Alignment, Background, Border, Color, Element, Length, Point, Rectangle, Size, mouse};
 
@@ -95,108 +93,50 @@ pub fn view<'a>(workspace: &'a Workspace, stores: &'a AppStores) -> Element<'a, 
     };
 
     if let Some(confirm) = &workspace.close_confirmation {
-        let overlay = container(Space::new())
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.4))),
-                ..container::Style::default()
-            });
-        // Modal Content Box
-        let title_text = text(confirm.message.to_string())
-            .size(TypeRole::LabelMd.size())
-            .style(move |_| text::Style {
-                color: Some(theme.foreground(ForegroundToken::Primary)),
-            });
+        let (title, list_items, discard_message) = match confirm {
+            CloseConfirmation::Tab {
+                message,
+                location,
+                tab,
+            } => (
+                message.to_string(),
+                Vec::new(),
+                WorkspaceMessage::ConfirmCloseDiscard {
+                    location: *location,
+                    tab: *tab,
+                },
+            ),
+            CloseConfirmation::Batch { panels, summary } => {
+                let list_items = if panels.len() > 1 {
+                    panels
+                        .iter()
+                        .map(|panel| format!("• {}", panel.title))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                (
+                    summary.to_string(),
+                    list_items,
+                    WorkspaceMessage::ConfirmCloseDiscard {
+                        location: workspace.focused,
+                        tab: 0,
+                    },
+                )
+            }
+        };
 
-        let cancel_btn = button(
-            text("Cancel")
-                .size(TypeRole::LabelMd.size())
-                .style(move |_| text::Style {
-                    color: Some(theme.foreground(ForegroundToken::Secondary)),
-                }),
-        )
-        .padding([
-            SpacingToken::S2.value() as u16,
-            SpacingToken::S3.value() as u16,
-        ])
-        .on_press(WorkspaceMessage::ConfirmCloseCancel)
-        .style(move |_, _| button::Style {
-            background: Some(Background::Color(
-                theme.background(BackgroundToken::Tertiary),
-            )),
-            border: Border {
-                color: theme.border(BorderToken::Default),
-                width: 1.0,
-                radius: RadiusToken::Sm.value().into(),
-            },
-            ..button::Style::default()
-        });
-
-        let discard_btn = button(
-            text("Discard")
-                .size(TypeRole::LabelMd.size())
-                .style(move |_| text::Style {
-                    color: Some(theme.status(StatusToken::Danger)),
-                }),
-        )
-        .padding([
-            SpacingToken::S2.value() as u16,
-            SpacingToken::S3.value() as u16,
-        ])
-        .on_press(WorkspaceMessage::ConfirmCloseDiscard {
-            location: confirm.location,
-            tab: confirm.tab,
-        })
-        .style(move |_, _| button::Style {
-            background: Some(Background::Color(Color::TRANSPARENT)),
-            border: Border {
-                color: theme.status(StatusToken::Danger),
-                width: 1.0,
-                radius: RadiusToken::Sm.value().into(),
-            },
-            ..button::Style::default()
-        });
-
-        let modal_box = container(
-            column![
-                title_text,
-                Space::new().height(Length::Fixed(SpacingToken::S4.value())),
-                row![
-                    cancel_btn,
-                    Space::new().width(Length::Fixed(SpacingToken::S2.value())),
-                    discard_btn
-                ]
-            ]
-            .align_x(Horizontal::Center),
-        )
-        .padding(SpacingToken::S5.value())
-        .width(Length::Shrink)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(
-                theme.background(BackgroundToken::Primary),
-            )),
-            border: Border {
-                color: theme.border(BorderToken::Strong),
-                width: 1.0,
-                radius: RadiusToken::Md.value().into(),
-            },
-            ..container::Style::default()
-        });
-
-        let modal_centered = container(modal_box)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(Horizontal::Center)
-            .align_y(iced::alignment::Vertical::Center);
-
-        stack![decorated, overlay, modal_centered]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    } else {
-        decorated
+        return close_prompt_overlay(
+            decorated,
+            theme,
+            title,
+            list_items,
+            WorkspaceMessage::ConfirmCloseCancel,
+            discard_message,
+        );
     }
+
+    decorated
 }
 
 fn center_pane_grid<'a>(
@@ -244,7 +184,7 @@ fn dock_side<'a>(
             location,
         );
         return container(body)
-            .width(Length::Fixed(SIDE_DOCK_WIDTH))
+            .width(Length::Fixed(dock.extent))
             .height(Length::Fill)
             .style(move |_| {
                 pane_frame_style(
@@ -283,7 +223,7 @@ fn dock_bottom<'a>(
         );
         return container(body)
             .width(Length::Fill)
-            .height(Length::Fixed(BOTTOM_DOCK_HEIGHT))
+            .height(Length::Fixed(dock.extent))
             .style(move |_| {
                 pane_frame_style(
                     theme,
@@ -1021,6 +961,138 @@ fn palette_overlay<'a>(
         .padding(SpacingToken::S3.value() as u16);
 
     stack![backdrop, positioned]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+const CLOSE_PROMPT_LIST_MAX_HEIGHT: f32 = 160.0;
+
+/// Shared modal chrome for dirty-tab confirmations (workspace tab close and app-level close).
+pub fn close_prompt_overlay<'a, Message: Clone + 'a>(
+    base: Element<'a, Message>,
+    theme: OpenZoneTheme,
+    title: String,
+    list_items: Vec<String>,
+    on_cancel: Message,
+    on_discard: Message,
+) -> Element<'a, Message> {
+    let overlay = container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.4))),
+            ..container::Style::default()
+        });
+
+    let title_text = text(title)
+        .size(TypeRole::LabelMd.size())
+        .style(move |_| text::Style {
+            color: Some(theme.foreground(ForegroundToken::Primary)),
+        });
+
+    let mut body = column![title_text.align_x(Horizontal::Center)]
+        .spacing(SpacingToken::S4.value())
+        .align_x(Horizontal::Center);
+
+    if !list_items.is_empty() {
+        let rows: Vec<Element<'a, Message>> = list_items
+            .into_iter()
+            .map(|item| {
+                text(item)
+                    .size(TypeRole::LabelMd.size())
+                    .style(move |_| text::Style {
+                        color: Some(theme.foreground(ForegroundToken::Secondary)),
+                    })
+                    .into()
+            })
+            .collect();
+        let list = column(rows)
+            .spacing(SpacingToken::S1.value())
+            .width(Length::Fill);
+        let list = scrollable(list)
+            .height(Length::Fixed(CLOSE_PROMPT_LIST_MAX_HEIGHT))
+            .width(Length::Fill);
+        body = body.push(list);
+    }
+
+    let cancel_btn = button(
+        text("Cancel")
+            .size(TypeRole::LabelMd.size())
+            .style(move |_| text::Style {
+                color: Some(theme.foreground(ForegroundToken::Secondary)),
+            }),
+    )
+    .padding([
+        SpacingToken::S2.value() as u16,
+        SpacingToken::S3.value() as u16,
+    ])
+    .on_press(on_cancel)
+    .style(move |_, _| button::Style {
+        background: Some(Background::Color(
+            theme.background(BackgroundToken::Tertiary),
+        )),
+        border: Border {
+            color: theme.border(BorderToken::Default),
+            width: 1.0,
+            radius: RadiusToken::Sm.value().into(),
+        },
+        ..button::Style::default()
+    });
+
+    let discard_btn = button(
+        text("Discard")
+            .size(TypeRole::LabelMd.size())
+            .style(move |_| text::Style {
+                color: Some(theme.status(StatusToken::Danger)),
+            }),
+    )
+    .padding([
+        SpacingToken::S2.value() as u16,
+        SpacingToken::S3.value() as u16,
+    ])
+    .on_press(on_discard)
+    .style(move |_, _| button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        border: Border {
+            color: theme.status(StatusToken::Danger),
+            width: 1.0,
+            radius: RadiusToken::Sm.value().into(),
+        },
+        ..button::Style::default()
+    });
+
+    body = body.push(
+        row![
+            cancel_btn,
+            Space::new().width(Length::Fixed(SpacingToken::S2.value())),
+            discard_btn
+        ]
+        .align_y(Alignment::Center),
+    );
+
+    let modal_box = container(body)
+        .padding(SpacingToken::S5.value())
+        .width(Length::Shrink)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(
+                theme.background(BackgroundToken::Primary),
+            )),
+            border: Border {
+                color: theme.border(BorderToken::Strong),
+                width: 1.0,
+                radius: RadiusToken::Md.value().into(),
+            },
+            ..container::Style::default()
+        });
+
+    let modal_centered = container(modal_box)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Horizontal::Center)
+        .align_y(iced::alignment::Vertical::Center);
+
+    stack![base, overlay, modal_centered]
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

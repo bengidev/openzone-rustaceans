@@ -108,6 +108,7 @@ mod tests {
                 active: 0,
             },
             visibility: DockVisibility::Hidden,
+            extent: Some(crate::workspace::workspace_layout_metrics::SIDE_DOCK_WIDTH),
         };
         LayoutSnapshot {
             center: CenterNode::Pane(PaneSnapshot {
