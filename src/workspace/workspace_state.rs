@@ -90,6 +90,8 @@ pub struct Workspace {
     pub theme_mode: ThemeMode,
     /// Active tab drag state. `Some` while the user is dragging a tab.
     pub drag_state: Option<DragState>,
+    /// Tab chip currently hovered in a tab strip.
+    pub hovered_tab: Option<(PanelLocation, usize)>,
     /// Latest logical window size for drag bounds and drop-target preview.
     pub window_size: Size,
     /// Drop-zone preview while another window's tab hovers over this one.
@@ -139,6 +141,7 @@ impl Workspace {
             theme: OpenZoneTheme::from_mode(theme_mode),
             theme_mode,
             drag_state: None,
+            hovered_tab: None,
             window_size: DEFAULT_WINDOW_SIZE,
             cross_window_drop_preview: None,
             torn_off_panel: None,
@@ -173,6 +176,7 @@ impl Workspace {
             theme: OpenZoneTheme::from_mode(theme_mode),
             theme_mode,
             drag_state: None,
+            hovered_tab: None,
             window_size: DEFAULT_WINDOW_SIZE,
             cross_window_drop_preview: None,
             torn_off_panel: None,
@@ -456,6 +460,17 @@ impl Workspace {
                 self.focused = location;
                 if let Some(pane_state) = self.pane_state_mut(location) {
                     pane_state.select(tab);
+                }
+            }
+            WorkspaceMessage::TabCloseRequested { location, tab } => {
+                self.close_tab_at(location, tab, stores);
+            }
+            WorkspaceMessage::TabHoverEntered { location, tab } => {
+                self.hovered_tab = Some((location, tab));
+            }
+            WorkspaceMessage::TabHoverExited { location, tab } => {
+                if self.hovered_tab == Some((location, tab)) {
+                    self.hovered_tab = None;
                 }
             }
             WorkspaceMessage::Panel {
@@ -956,6 +971,26 @@ impl Workspace {
         if let Some(tab_idx) = tab_index {
             self.close_tab_immediately(focused, tab_idx, stores);
         }
+    }
+
+    /// Close a specific tab, honoring close confirmation when required.
+    fn close_tab_at(&mut self, location: PanelLocation, tab: usize, stores: &mut AppStores) {
+        let close_req = self
+            .pane_state(location)
+            .and_then(|ps| ps.tabs.get(tab))
+            .map(|panel| panel.close_request());
+
+        if let Some(CloseRequest::Confirm { message }) = close_req {
+            self.palette.dismiss();
+            self.close_confirmation = Some(CloseConfirmation::Tab {
+                location,
+                tab,
+                message,
+            });
+            return;
+        }
+
+        self.close_tab_immediately(location, tab, stores);
     }
 
     /// Close a tab immediately, performing any required pane cleanup/collapsing.
