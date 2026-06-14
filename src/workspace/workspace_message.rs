@@ -74,6 +74,12 @@ pub enum WorkspaceMessage {
     PaletteDismiss,
     /// User clicked a specific palette item.
     PaletteItemClicked(usize),
+    /// User clicked the close affordance on a specific tab.
+    TabCloseRequested { location: PanelLocation, tab: usize },
+    /// Cursor entered or left a tab in the tab strip.
+    TabHoverChanged {
+        location: Option<(PanelLocation, usize)>,
+    },
 }
 
 impl std::fmt::Debug for WorkspaceMessage {
@@ -130,6 +136,15 @@ impl std::fmt::Debug for WorkspaceMessage {
                 write!(f, "PaletteItemClicked({i})")
             }
             WorkspaceMessage::ConfirmCloseCancel => f.debug_tuple("ConfirmCloseCancel").finish(),
+            WorkspaceMessage::TabCloseRequested { location, tab } => f
+                .debug_struct("TabCloseRequested")
+                .field("location", location)
+                .field("tab", tab)
+                .finish(),
+            WorkspaceMessage::TabHoverChanged { location } => f
+                .debug_struct("TabHoverChanged")
+                .field("location", location)
+                .finish(),
         }
     }
 }

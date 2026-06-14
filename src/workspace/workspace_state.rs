@@ -90,6 +90,8 @@ pub struct Workspace {
     pub theme_mode: ThemeMode,
     /// Active tab drag state. `Some` while the user is dragging a tab.
     pub drag_state: Option<DragState>,
+    /// Tab currently under the cursor in a tab strip, if any.
+    pub hovered_tab: Option<(PanelLocation, usize)>,
     /// Latest logical window size for drag bounds and drop-target preview.
     pub window_size: Size,
     /// Drop-zone preview while another window's tab hovers over this one.
@@ -139,6 +141,7 @@ impl Workspace {
             theme: OpenZoneTheme::from_mode(theme_mode),
             theme_mode,
             drag_state: None,
+            hovered_tab: None,
             window_size: DEFAULT_WINDOW_SIZE,
             cross_window_drop_preview: None,
             torn_off_panel: None,
@@ -173,6 +176,7 @@ impl Workspace {
             theme: OpenZoneTheme::from_mode(theme_mode),
             theme_mode,
             drag_state: None,
+            hovered_tab: None,
             window_size: DEFAULT_WINDOW_SIZE,
             cross_window_drop_preview: None,
             torn_off_panel: None,
@@ -537,6 +541,12 @@ impl Workspace {
                 if let Some(cmd) = self.palette.take_selection() {
                     self.dispatch_palette_command(cmd, stores);
                 }
+            }
+            WorkspaceMessage::TabCloseRequested { location, tab } => {
+                self.request_close_tab(location, tab, stores);
+            }
+            WorkspaceMessage::TabHoverChanged { location } => {
+                self.hovered_tab = location;
             }
         }
     }
@@ -936,26 +946,34 @@ impl Workspace {
     fn close_active_tab(&mut self, stores: &mut AppStores) {
         let focused = self.focused;
         let tab_index = self.pane_state(focused).map(|ps| ps.active);
-        let close_req = self
-            .pane_state(focused)
-            .and_then(|ps| ps.active_panel())
-            .map(|p| p.close_request());
+        if let Some(tab_idx) = tab_index {
+            self.request_close_tab(focused, tab_idx, stores);
+        }
+    }
 
-        if let Some(tab_idx) = tab_index
-            && let Some(CloseRequest::Confirm { message }) = close_req
-        {
+    /// Close a specific tab, honoring dirty confirmation when required.
+    pub fn request_close_tab(
+        &mut self,
+        location: PanelLocation,
+        tab: usize,
+        stores: &mut AppStores,
+    ) {
+        let close_req = self
+            .pane_state(location)
+            .and_then(|ps| ps.tabs.get(tab))
+            .map(|panel| panel.close_request());
+
+        if let Some(CloseRequest::Confirm { message }) = close_req {
             self.palette.dismiss();
             self.close_confirmation = Some(CloseConfirmation::Tab {
-                location: focused,
-                tab: tab_idx,
+                location,
+                tab,
                 message,
             });
             return;
         }
 
-        if let Some(tab_idx) = tab_index {
-            self.close_tab_immediately(focused, tab_idx, stores);
-        }
+        self.close_tab_immediately(location, tab, stores);
     }
 
     /// Close a tab immediately, performing any required pane cleanup/collapsing.
@@ -2241,5 +2259,81 @@ mod tests {
         let pane_state = workspace.panes.get(pane).unwrap();
         assert_eq!(pane_state.len(), 1);
         assert_eq!(pane_state.tabs[0].title(), "Text");
+    }
+
+    #[test]
+    fn tab_hover_changed_updates_hovered_tab() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabHoverChanged {
+                location: Some((location, 1)),
+            },
+            &mut stores,
+        );
+        assert_eq!(workspace.hovered_tab, Some((location, 1)));
+
+        workspace.update(
+            WorkspaceMessage::TabHoverChanged { location: None },
+            &mut stores,
+        );
+        assert!(workspace.hovered_tab.is_none());
+    }
+
+    #[test]
+    fn tab_close_requested_removes_clean_tab() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabCloseRequested { location, tab: 1 },
+            &mut stores,
+        );
+
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center location");
+        };
+        assert_eq!(workspace.panes.get(pane).unwrap().len(), 1);
+        assert_eq!(
+            workspace.panes.get(pane).unwrap().tabs[0].title(),
+            "Counter"
+        );
+        assert!(workspace.close_confirmation.is_none());
+    }
+
+    #[test]
+    fn tab_close_requested_shows_confirmation_for_dirty_tab() {
+        use crate::features::ScratchMessage;
+        use crate::features::ScratchPanel;
+        use iced::widget::text_editor;
+
+        let mut stores = AppStores::new();
+        let mut workspace = Workspace::single_pane(
+            PaneState::new(vec![Box::new(ScratchPanel::new())]),
+            ThemeMode::Dark,
+        );
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::Panel {
+                location,
+                tab: 0,
+                message: erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                    text_editor::Edit::Insert('a'),
+                ))),
+            },
+            &mut stores,
+        );
+        workspace.update(
+            WorkspaceMessage::TabCloseRequested { location, tab: 0 },
+            &mut stores,
+        );
+
+        assert!(workspace.close_confirmation.is_some());
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center location");
+        };
+        assert_eq!(workspace.panes.get(pane).unwrap().len(), 1);
     }
 }

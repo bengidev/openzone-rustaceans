@@ -32,6 +32,7 @@ pub mod workspace_registry;
 pub mod workspace_state;
 pub mod workspace_stores;
 pub mod workspace_view;
+pub mod workspace_view_smoke;
 
 use iced::{Subscription, Task, Theme, window};
 pub use workspace_command::{Chord, Command, KeyRef, Keymap, Mods, chord_from_keyboard_event};
