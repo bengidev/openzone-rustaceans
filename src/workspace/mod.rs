@@ -29,6 +29,7 @@ pub mod workspace_pane_state;
 pub mod workspace_panel;
 pub mod workspace_persistence;
 pub mod workspace_registry;
+pub mod workspace_shell_chrome;
 pub mod workspace_state;
 pub mod workspace_stores;
 pub mod workspace_view;

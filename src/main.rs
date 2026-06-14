@@ -500,14 +500,12 @@ impl OpenZone {
 
         let workspace_ids: HashSet<window::Id> = self.workspaces.keys().copied().collect();
         let pending_set: HashSet<window::Id> = pending.iter().copied().collect();
-        let is_app_quit = !workspace_ids.is_empty() && pending_set == workspace_ids;
-
-        if is_app_quit {
-            return self.prompt_app_quit();
-        }
+        let closing_all_workspaces = !workspace_ids.is_empty() && pending_set == workspace_ids;
+        let pending_count = pending.len();
 
         let mut batch = Task::none();
         let mut dirty_windows = Vec::new();
+        let mut closed_clean_window = false;
 
         for id in pending {
             let dirty = self
@@ -516,6 +514,7 @@ impl OpenZone {
                 .map(Workspace::collect_dirty_panels)
                 .unwrap_or_default();
             if dirty.is_empty() {
+                closed_clean_window = true;
                 batch = Task::batch([batch, self.force_close_workspace(id)]);
             } else {
                 dirty_windows.push((id, dirty));
@@ -524,6 +523,16 @@ impl OpenZone {
 
         if dirty_windows.is_empty() {
             return batch;
+        }
+
+        // Aggregate into an app-quit prompt when every workspace is closing and at
+        // least one clean window already closed in this batch (or this is the only
+        // window). Otherwise prompt dirty windows one at a time — e.g. two dirty
+        // windows closing together each get their own discard dialog, not quit.
+        if closing_all_workspaces
+            && (closed_clean_window || (pending_count == 1 && workspace_ids.len() == 1))
+        {
+            return Task::batch([batch, self.prompt_app_quit()]);
         }
 
         // Prompt one dirty window at a time so earlier prompts are not overwritten.
@@ -624,7 +633,7 @@ impl OpenZone {
         };
 
         if !self.pending_close_windows.is_empty() {
-            batch = Task::batch([batch, self.schedule_pending_close_evaluation()]);
+            batch = Task::batch([batch, self.evaluate_pending_closes()]);
         }
         batch
     }

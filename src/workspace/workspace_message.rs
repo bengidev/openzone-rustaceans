@@ -26,6 +26,12 @@ pub enum WorkspaceMessage {
     },
     /// The user selected a tab within a pane's tab strip.
     TabSelected { location: PanelLocation, tab: usize },
+    /// The user requested closing a specific tab from its close control.
+    TabCloseRequested { location: PanelLocation, tab: usize },
+    /// Pointer entered a tab chip in a tab strip.
+    TabHoverEntered { location: PanelLocation, tab: usize },
+    /// Pointer left a tab chip in a tab strip.
+    TabHoverExited { location: PanelLocation, tab: usize },
     /// A pane in the center grid was clicked — focus follows the click.
     PaneClicked(pane_grid::Pane),
     /// A dock's tab strip or rail was clicked — focus moves to the dock.
@@ -87,6 +93,21 @@ impl std::fmt::Debug for WorkspaceMessage {
                 .finish(),
             WorkspaceMessage::TabSelected { location, tab } => f
                 .debug_struct("TabSelected")
+                .field("location", location)
+                .field("tab", tab)
+                .finish(),
+            WorkspaceMessage::TabCloseRequested { location, tab } => f
+                .debug_struct("TabCloseRequested")
+                .field("location", location)
+                .field("tab", tab)
+                .finish(),
+            WorkspaceMessage::TabHoverEntered { location, tab } => f
+                .debug_struct("TabHoverEntered")
+                .field("location", location)
+                .field("tab", tab)
+                .finish(),
+            WorkspaceMessage::TabHoverExited { location, tab } => f
+                .debug_struct("TabHoverExited")
                 .field("location", location)
                 .field("tab", tab)
                 .finish(),

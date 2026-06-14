@@ -15,6 +15,7 @@ use crate::shared::design::{
     BackgroundToken, BorderToken, ForegroundToken, OpenZoneTheme, RadiusToken, SpacingToken,
     ThemeMode, TypeRole,
 };
+use crate::workspace::workspace_command::Command;
 use crate::workspace::workspace_dock::{Dock, DockVisibility};
 use crate::workspace::workspace_drag as drag;
 use crate::workspace::workspace_layout_metrics::{self as layout_metrics, DOCK_RAIL_THICKNESS};
@@ -24,6 +25,7 @@ use crate::workspace::workspace_pane_state::PaneState;
 use crate::workspace::workspace_panel::{
     CloseRequest, ErasedMessage, Panel, PanelKind, StatusSink,
 };
+use crate::workspace::workspace_shell_chrome as shell_chrome;
 use crate::workspace::workspace_state::{CloseConfirmation, Workspace};
 use crate::workspace::workspace_stores::AppStores;
 use iced::alignment::Horizontal;
@@ -32,7 +34,9 @@ use iced::widget::{
     Canvas, PaneGrid, button, canvas, column, container, mouse_area, pane_grid, row, scrollable,
     space, stack, text, text_input,
 };
-use iced::{Alignment, Background, Border, Color, Element, Length, Point, Rectangle, Size, mouse};
+use iced::{
+    Alignment, Background, Border, Color, Element, Length, Padding, Point, Rectangle, Size, mouse,
+};
 
 /// Render the whole workspace shell as a view over `stores`.
 ///
@@ -186,16 +190,7 @@ fn dock_side<'a>(
         return container(body)
             .width(Length::Fixed(dock.extent))
             .height(Length::Fill)
-            .style(move |_| {
-                pane_frame_style(
-                    theme,
-                    if focused {
-                        BorderToken::Strong
-                    } else {
-                        BorderToken::Default
-                    },
-                )
-            })
+            .style(move |_| pane_frame_style(theme, focused))
             .into();
     }
 
@@ -224,16 +219,7 @@ fn dock_bottom<'a>(
         return container(body)
             .width(Length::Fill)
             .height(Length::Fixed(dock.extent))
-            .style(move |_| {
-                pane_frame_style(
-                    theme,
-                    if focused {
-                        BorderToken::Strong
-                    } else {
-                        BorderToken::Default
-                    },
-                )
-            })
+            .style(move |_| pane_frame_style(theme, focused))
             .into();
     }
 
@@ -432,15 +418,9 @@ fn dock_control_button<'a>(
     let dock = workspace.docks.get(side);
     use crate::workspace::workspace_command::Command;
 
-    let is_empty = dock.is_empty();
     let visibility = dock.visibility;
 
-    // Color based on visibility state
-    let color = match visibility {
-        DockVisibility::Open => theme.foreground(ForegroundToken::Accent),
-        DockVisibility::Collapsed => theme.foreground(ForegroundToken::Secondary),
-        DockVisibility::Hidden => theme.foreground(ForegroundToken::Muted),
-    };
+    let color = shell_chrome::dock_control_color(theme, visibility);
 
     // Label with state indicator
     let display_label = match visibility {
@@ -472,8 +452,7 @@ fn dock_control_button<'a>(
         ..button::Style::default()
     });
 
-    // Disabled only when neither an existing tab nor a default surface factory exists.
-    let has_content = !is_empty || workspace.has_dock_factory(side);
+    let has_content = shell_chrome::dock_control_enabled(workspace, side);
     if !has_content && !dock.is_open() {
         btn.into()
     } else if visibility == DockVisibility::Open {
@@ -539,16 +518,10 @@ fn pane_body<'a>(
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let border_token = if focused {
-        BorderToken::Strong
-    } else {
-        BorderToken::Default
-    };
-
     container(inner)
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(move |_| pane_frame_style(theme, border_token))
+        .style(move |_| pane_frame_style(theme, focused))
         .into()
 }
 
@@ -571,54 +544,185 @@ fn tab_strip<'a>(
         }
 
         let active = index == pane_state.active;
-        let display_title = if panel.is_dirty() {
-            format!("• {}", panel.title())
-        } else {
-            panel.title().to_string()
-        };
-        let label =
-            text(display_title)
-                .size(TypeRole::LabelMd.size())
-                .style(move |_: &iced::Theme| text::Style {
-                    color: Some(if active {
-                        theme.foreground(ForegroundToken::Accent)
-                    } else {
-                        theme.foreground(ForegroundToken::Secondary)
-                    }),
-                });
-
-        let tab_body = container(label)
-            .padding([
-                SpacingToken::S1.value() as u16,
-                SpacingToken::S3.value() as u16,
-            ])
-            .style(move |_| tab_chip_style(theme, active));
-
-        tab_elements.push(
-            mouse_area(tab_body)
-                .on_press(WorkspaceMessage::TabDragStarted {
-                    location,
-                    tab: index,
-                })
-                .interaction(mouse::Interaction::Grab)
-                .into(),
-        );
+        let hovered = workspace.hovered_tab == Some((location, index));
+        tab_elements.push(tab_chip(
+            theme,
+            location,
+            index,
+            panel.as_ref(),
+            active,
+            hovered,
+        ));
     }
 
-    let mut strip = row![].spacing(SpacingToken::S1.value());
+    let mut tabs_row = row![].spacing(SpacingToken::S1.value());
     for tab in tab_elements {
-        strip = strip.push(tab);
+        tabs_row = tabs_row.push(tab);
     }
 
-    container(
-        container(strip)
+    let scrollable_tabs = scrollable(
+        container(tabs_row)
             .width(Length::Shrink)
-            .padding(SpacingToken::S1.value())
-            .style(move |_| bar_style(theme, BackgroundToken::Tertiary)),
+            .padding(SpacingToken::S1.value()),
     )
     .width(Length::Fill)
-    .align_x(Horizontal::Left)
-    .into()
+    .direction(scrollable::Direction::Horizontal(
+        scrollable::Scrollbar::default(),
+    ));
+
+    let strip_body: Element<'a, WorkspaceMessage> = if let PanelLocation::Dock(side) = location {
+        row![
+            scrollable_tabs,
+            Space::new().width(Length::Fixed(SpacingToken::S2.value())),
+            dock_strip_controls(theme, side, workspace),
+        ]
+        .width(Length::Fill)
+        .align_y(Alignment::Center)
+        .spacing(SpacingToken::S1.value())
+        .into()
+    } else {
+        scrollable_tabs.into()
+    };
+
+    container(strip_body)
+        .width(Length::Fill)
+        .style(move |_| bar_style(theme, BackgroundToken::Tertiary))
+        .into()
+}
+
+fn tab_chip<'a>(
+    theme: OpenZoneTheme,
+    location: PanelLocation,
+    index: usize,
+    panel: &'a dyn Panel,
+    active: bool,
+    hovered: bool,
+) -> Element<'a, WorkspaceMessage> {
+    let display_title = if panel.is_dirty() {
+        shell_chrome::dirty_tab_title(&panel.title())
+    } else {
+        panel.title().to_string()
+    };
+
+    let label = text(display_title)
+        .size(TypeRole::LabelMd.size())
+        .style(move |_: &iced::Theme| text::Style {
+            color: Some(if active {
+                theme.foreground(ForegroundToken::Accent)
+            } else {
+                theme.foreground(ForegroundToken::Secondary)
+            }),
+        });
+
+    let mut title_row = row![label].spacing(SpacingToken::S1.value());
+    if shell_chrome::tab_close_visible(active, hovered) {
+        let close = button(text("×").size(TypeRole::LabelMd.size()).style(
+            move |_: &iced::Theme| text::Style {
+                color: Some(theme.foreground(ForegroundToken::Muted)),
+            },
+        ))
+        .padding(SpacingToken::S1.value() as u16)
+        .on_press(WorkspaceMessage::TabCloseRequested {
+            location,
+            tab: index,
+        })
+        .style(move |_, _| button::Style {
+            background: Some(Background::Color(Color::TRANSPARENT)),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 0.0.into(),
+            },
+            ..button::Style::default()
+        });
+        title_row = title_row.push(close);
+    }
+
+    let underline =
+        container(Space::new().height(Length::Fixed(shell_chrome::ACTIVE_TAB_UNDERLINE)))
+            .width(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(shell_chrome::tab_chip_underline_color(
+                    theme, active,
+                ))),
+                ..container::Style::default()
+            });
+
+    let chip_inner = column![title_row, underline].spacing(0.0);
+    let chip_body = container(chip_inner)
+        .padding([
+            SpacingToken::S1.value() as u16,
+            SpacingToken::S3.value() as u16,
+        ])
+        .style(move |_| tab_chip_style(theme, active));
+
+    mouse_area(chip_body)
+        .on_press(WorkspaceMessage::TabDragStarted {
+            location,
+            tab: index,
+        })
+        .on_enter(WorkspaceMessage::TabHoverEntered {
+            location,
+            tab: index,
+        })
+        .on_exit(WorkspaceMessage::TabHoverExited {
+            location,
+            tab: index,
+        })
+        .interaction(mouse::Interaction::Grab)
+        .into()
+}
+
+fn dock_strip_controls<'a>(
+    theme: OpenZoneTheme,
+    side: DockSide,
+    workspace: &'a Workspace,
+) -> Element<'a, WorkspaceMessage> {
+    let dock = workspace.docks.get(side);
+    let (collapse_label, hide_label) = shell_chrome::dock_strip_control_labels();
+    let color = shell_chrome::dock_control_color(theme, dock.visibility);
+
+    let collapse = button(
+        text(collapse_label)
+            .size(TypeRole::MonoSm.size())
+            .style(move |_: &iced::Theme| text::Style { color: Some(color) }),
+    )
+    .padding(SpacingToken::S1.value() as u16)
+    .on_press(WorkspaceMessage::Command(Command::CollapseDock(side)))
+    .style(move |_, _| button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 0.0.into(),
+        },
+        ..button::Style::default()
+    });
+
+    let hide = button(
+        text(hide_label)
+            .size(TypeRole::MonoSm.size())
+            .style(move |_: &iced::Theme| text::Style { color: Some(color) }),
+    )
+    .padding(SpacingToken::S1.value() as u16)
+    .on_press(WorkspaceMessage::Command(Command::HideDock(side)))
+    .style(move |_, _| button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 0.0.into(),
+        },
+        ..button::Style::default()
+    });
+
+    row![collapse, hide]
+        .spacing(SpacingToken::S1.value())
+        .padding([
+            SpacingToken::S1.value() as u16,
+            SpacingToken::S2.value() as u16,
+        ])
+        .into()
 }
 
 fn surface_style(theme: OpenZoneTheme, token: BackgroundToken) -> container::Style {
@@ -640,18 +744,14 @@ fn bar_style(theme: OpenZoneTheme, token: BackgroundToken) -> container::Style {
     }
 }
 
-fn pane_frame_style(theme: OpenZoneTheme, border_token: BorderToken) -> container::Style {
+fn pane_frame_style(theme: OpenZoneTheme, focused: bool) -> container::Style {
     container::Style {
         background: Some(Background::Color(
             theme.background(BackgroundToken::Secondary),
         )),
         border: Border {
-            color: theme.border(border_token),
-            width: if border_token == BorderToken::Strong {
-                2.0
-            } else {
-                1.0
-            },
+            color: shell_chrome::pane_border_color(theme, focused),
+            width: shell_chrome::pane_border_width(focused),
             radius: RadiusToken::Xs.value().into(),
         },
         ..container::Style::default()
@@ -750,15 +850,6 @@ impl<Message> Program<Message> for DropOverlay {
             && rect.width > 0.0
             && rect.height > 0.0
         {
-            let fill = Color {
-                a: 0.18,
-                ..self.accent
-            };
-            frame.fill_rectangle(
-                Point::new(rect.x, rect.y),
-                Size::new(rect.width, rect.height),
-                fill,
-            );
             frame.stroke_rectangle(
                 Point::new(rect.x, rect.y),
                 Size::new(rect.width, rect.height),
@@ -767,27 +858,11 @@ impl<Message> Program<Message> for DropOverlay {
         }
 
         if let Some(ghost) = &self.ghost {
-            let ghost_fill = Color {
-                a: 0.92,
-                ..self.elevated
-            };
-            frame.fill_rectangle(ghost.position, ghost.size, ghost_fill);
             frame.stroke_rectangle(
                 ghost.position,
                 ghost.size,
                 Stroke::default().with_width(1.0).with_color(self.accent),
             );
-            let label = canvas::Text {
-                content: ghost.title.clone(),
-                position: Point::new(
-                    ghost.position.x + SpacingToken::S3.value(),
-                    ghost.position.y + SpacingToken::S1.value(),
-                ),
-                size: iced::Pixels(TypeRole::LabelMd.size()),
-                color: self.accent,
-                ..canvas::Text::default()
-            };
-            frame.fill_text(label);
         }
 
         vec![frame.into_geometry()]
@@ -795,22 +870,12 @@ impl<Message> Program<Message> for DropOverlay {
 }
 
 fn tab_chip_style(theme: OpenZoneTheme, active: bool) -> container::Style {
-    let background = if active {
-        theme.background(BackgroundToken::Elevated)
-    } else {
-        Color::TRANSPARENT
-    };
-
     container::Style {
-        background: Some(Background::Color(background)),
+        background: Some(Background::Color(Color::TRANSPARENT)),
         border: Border {
-            color: theme.border(if active {
-                BorderToken::Subtle
-            } else {
-                BorderToken::Default
-            }),
-            width: if active { 1.0 } else { 0.0 },
-            radius: RadiusToken::Xs.value().into(),
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 0.0.into(),
         },
         text_color: Some(if active {
             theme.foreground(ForegroundToken::Accent)
@@ -843,21 +908,15 @@ fn tab_button_style(theme: OpenZoneTheme, active: bool) -> button::Style {
     }
 }
 
-/// Render the command palette as a backdrop + top-centered dropdown.
+/// Render the command palette as a top-centered dropdown below the title bar.
 fn palette_overlay<'a>(
     theme: OpenZoneTheme,
     workspace: &'a Workspace,
 ) -> Element<'a, WorkspaceMessage> {
     let palette = &workspace.palette;
 
-    // Backdrop captures clicks outside the dropdown → dismiss.
-    let backdrop = mouse_area(
-        container(Space::new())
-            .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .on_press(WorkspaceMessage::PaletteDismiss);
-    let max_width = 440.0;
+    let palette_spec = shell_chrome::PaletteOverlaySpec::current();
+    let max_width = palette_spec.max_width;
 
     let items: Vec<Element<'_, WorkspaceMessage>> = palette
         .filtered
@@ -954,13 +1013,25 @@ fn palette_overlay<'a>(
         ..container::Style::default()
     });
 
+    // Invisible click-catcher: modal without a visible backdrop.
+    let click_catcher = mouse_area(
+        container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .on_press(WorkspaceMessage::PaletteDismiss);
+
     let positioned = container(dropdown_card)
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(Horizontal::Center)
-        .padding(SpacingToken::S3.value() as u16);
+        .align_y(iced::alignment::Vertical::Top)
+        .padding(Padding {
+            top: palette_spec.top_inset,
+            ..Padding::ZERO
+        });
 
-    stack![backdrop, positioned]
+    stack![click_catcher, positioned]
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
