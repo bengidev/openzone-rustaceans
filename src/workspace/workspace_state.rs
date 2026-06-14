@@ -778,12 +778,11 @@ impl Workspace {
             chord,
             Chord {
                 key: crate::workspace::workspace_command::KeyRef::Char('p'),
-                mods:
-                    crate::workspace::workspace_command::Mods {
-                        command: true,
-                        shift: true,
-                        alt: false,
-                    },
+                mods: crate::workspace::workspace_command::Mods {
+                    command: true,
+                    shift: true,
+                    alt: false,
+                },
             }
         )
     }
@@ -1917,8 +1916,8 @@ mod tests {
 
     #[test]
     fn opening_close_confirmation_dismisses_palette() {
-        use crate::features::ScratchPanel;
         use crate::features::ScratchMessage;
+        use crate::features::ScratchPanel;
         use iced::widget::text_editor;
 
         let mut stores = AppStores::new();
@@ -1936,9 +1935,9 @@ mod tests {
             WorkspaceMessage::Panel {
                 location,
                 tab: 0,
-                message: crate::workspace::erase(ScratchMessage::Edit(
-                    text_editor::Action::Edit(text_editor::Edit::Insert('a')),
-                )),
+                message: crate::workspace::erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                    text_editor::Edit::Insert('a'),
+                ))),
             },
             &mut stores,
         );
@@ -1950,5 +1949,4 @@ mod tests {
         assert!(workspace.close_confirmation.is_some());
         assert!(!workspace.palette.open);
     }
-
 }

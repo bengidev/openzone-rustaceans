@@ -196,7 +196,12 @@ mod tests {
         let mut palette = PaletteState::new();
         palette.filter(&all);
         assert_eq!(palette.filtered.len(), all.len());
-        assert!(palette.filtered.iter().any(|item| item.id == CommandId::NewWindow));
+        assert!(
+            palette
+                .filtered
+                .iter()
+                .any(|item| item.id == CommandId::NewWindow)
+        );
     }
 
     #[test]
@@ -256,4 +261,3 @@ mod tests {
         assert!(palette.filtered.is_empty());
     }
 }
-
