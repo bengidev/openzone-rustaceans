@@ -4,7 +4,8 @@
 //!
 //! The workspace owns [`PaletteState`] (open/query/selection UI state).
 //! The app root seeds available commands via [`CommandItem`]s at construction.
-//! Filtering is case-insensitive substring matching, capped at [`MAX_RESULTS`].
+//! Filtering is case-insensitive substring matching. Non-empty queries are
+//! capped at [`MAX_RESULTS`]; an empty query shows the full catalog.
 
 use std::borrow::Cow;
 
@@ -67,12 +68,13 @@ impl PaletteState {
         }
     }
 
-    /// Re-filter from `all` using case-insensitive substring matching,
-    /// capped at [`MAX_RESULTS`]. Resets selection to 0.
+    /// Re-filter from `all` using case-insensitive substring matching.
+    /// Non-empty queries are capped at [`MAX_RESULTS`]; an empty query shows
+    /// the full catalog. Resets selection to 0.
     pub fn filter(&mut self, all: &[CommandItem]) {
         let q = self.query.trim().to_lowercase();
         if q.is_empty() {
-            self.filtered = all.iter().take(MAX_RESULTS).cloned().collect();
+            self.filtered = all.to_vec();
         } else {
             self.filtered = all
                 .iter()
@@ -177,3 +179,81 @@ pub fn default_command_items() -> Vec<CommandItem> {
         CommandItem::new("New Window", CommandId::NewWindow),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_items() -> Vec<CommandItem> {
+        (0..15)
+            .map(|i| CommandItem::new(format!("Command {i}"), CommandId::NewWindow))
+            .collect()
+    }
+
+    #[test]
+    fn empty_query_shows_full_catalog() {
+        let all = default_command_items();
+        let mut palette = PaletteState::new();
+        palette.filter(&all);
+        assert_eq!(palette.filtered.len(), all.len());
+        assert!(palette.filtered.iter().any(|item| item.id == CommandId::NewWindow));
+    }
+
+    #[test]
+    fn non_empty_query_is_capped_at_max_results() {
+        let all = sample_items();
+        let mut palette = PaletteState::new();
+        palette.query = "command".into();
+        palette.filter(&all);
+        assert_eq!(palette.filtered.len(), MAX_RESULTS);
+    }
+
+    #[test]
+    fn filter_is_case_insensitive() {
+        let all = default_command_items();
+        let mut palette = PaletteState::new();
+        palette.query = "NEW WINDOW".into();
+        palette.filter(&all);
+        assert_eq!(palette.filtered.len(), 1);
+        assert_eq!(palette.filtered[0].id, CommandId::NewWindow);
+    }
+
+    #[test]
+    fn selection_wraps() {
+        let all = default_command_items();
+        let mut palette = PaletteState::new();
+        palette.filter(&all);
+        let last = palette.filtered.len() - 1;
+        palette.selected = 0;
+        palette.select_prev();
+        assert_eq!(palette.selected, last);
+        palette.select_next();
+        assert_eq!(palette.selected, 0);
+    }
+
+    #[test]
+    fn take_selection_clears_state() {
+        let all = default_command_items();
+        let mut palette = PaletteState::new();
+        palette.open = true;
+        palette.query = "new".into();
+        palette.filter(&all);
+        let cmd = palette.take_selection();
+        assert_eq!(cmd, Some(CommandId::NewWindow));
+        assert!(!palette.open);
+        assert!(palette.query.is_empty());
+        assert!(palette.filtered.is_empty());
+    }
+
+    #[test]
+    fn dismiss_clears_without_returning_command() {
+        let all = default_command_items();
+        let mut palette = PaletteState::new();
+        palette.open = true;
+        palette.filter(&all);
+        palette.dismiss();
+        assert!(!palette.open);
+        assert!(palette.filtered.is_empty());
+    }
+}
+

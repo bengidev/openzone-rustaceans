@@ -489,12 +489,7 @@ impl Workspace {
                 self.close_confirmation = None;
             }
             WorkspaceMessage::TogglePalette => {
-                self.palette.open = !self.palette.open;
-                if self.palette.open {
-                    self.palette.filter(&self.all_commands);
-                } else {
-                    self.palette.dismiss();
-                }
+                self.toggle_palette();
             }
             WorkspaceMessage::PaletteQueryChanged(q) => {
                 self.palette.query = q;
@@ -684,15 +679,21 @@ impl Workspace {
     /// Overlay-first key routing: overlay (palette), then panel-first
     /// capture, then workspace keymap.
     fn handle_key(&mut self, chord: Chord, stores: &mut AppStores) {
-        // --- overlay layer: command palette ---
+        // --- overlay layer: command palette (modal while open) ---
         if self.palette.open {
+            if Self::is_palette_toggle_chord(chord) {
+                self.toggle_palette();
+                return;
+            }
             match chord.key {
                 crate::workspace::workspace_command::KeyRef::Escape => {
                     self.palette.dismiss();
                     return;
                 }
                 crate::workspace::workspace_command::KeyRef::Enter => {
-                    if let Some(cmd) = self.palette.take_selection() {
+                    if !self.palette.filtered.is_empty()
+                        && let Some(cmd) = self.palette.take_selection()
+                    {
                         self.dispatch_palette_command(cmd, stores);
                     }
                     return;
@@ -705,7 +706,7 @@ impl Workspace {
                     self.palette.select_next();
                     return;
                 }
-                _ => {}
+                _ => return,
             }
         }
 
@@ -720,22 +721,8 @@ impl Workspace {
         // --- workspace layer ---
 
         // Cmd+Shift+P toggles the palette (unless a panel consumed it above).
-        if let Chord {
-            key: crate::workspace::workspace_command::KeyRef::Char('p'),
-            mods:
-                crate::workspace::workspace_command::Mods {
-                    command: true,
-                    shift: true,
-                    alt: false,
-                },
-        } = chord
-        {
-            self.palette.open = !self.palette.open;
-            if self.palette.open {
-                self.palette.filter(&self.all_commands);
-            } else {
-                self.palette.dismiss();
-            }
+        if Self::is_palette_toggle_chord(chord) {
+            self.toggle_palette();
             return;
         }
 
@@ -783,6 +770,30 @@ impl Workspace {
                 }
             }
             Command::CloseActiveTab => self.close_active_tab(stores),
+        }
+    }
+
+    fn is_palette_toggle_chord(chord: Chord) -> bool {
+        matches!(
+            chord,
+            Chord {
+                key: crate::workspace::workspace_command::KeyRef::Char('p'),
+                mods:
+                    crate::workspace::workspace_command::Mods {
+                        command: true,
+                        shift: true,
+                        alt: false,
+                    },
+            }
+        )
+    }
+
+    fn toggle_palette(&mut self) {
+        if self.palette.open {
+            self.palette.dismiss();
+        } else {
+            self.palette.open = true;
+            self.palette.filter(&self.all_commands);
         }
     }
 
@@ -835,6 +846,7 @@ impl Workspace {
         if let Some(tab_idx) = tab_index
             && let Some(CloseRequest::Confirm { message }) = close_req
         {
+            self.palette.dismiss();
             self.close_confirmation = Some(CloseConfirmation {
                 location: focused,
                 tab: tab_idx,
@@ -1833,4 +1845,110 @@ mod tests {
         assert_eq!(workspace.docks.right.tabs.len(), 1);
         assert!(workspace.docks.right.is_open());
     }
+    #[test]
+    fn toggle_palette_opens_and_filters_commands() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        workspace.all_commands =
+            crate::workspace::workspace_command_palette::default_command_items();
+
+        workspace.update(WorkspaceMessage::TogglePalette, &mut stores);
+
+        assert!(workspace.palette.open);
+        assert_eq!(
+            workspace.palette.filtered.len(),
+            workspace.all_commands.len()
+        );
+    }
+
+    #[test]
+    fn palette_blocks_workspace_shortcuts_while_open() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        workspace.all_commands =
+            crate::workspace::workspace_command_palette::default_command_items();
+        workspace.update(WorkspaceMessage::TogglePalette, &mut stores);
+        let panes_before = workspace.panes.len();
+
+        workspace.update(
+            WorkspaceMessage::Key(Chord::ch('d', Mods::CMD)),
+            &mut stores,
+        );
+
+        assert_eq!(workspace.panes.len(), panes_before);
+        assert!(workspace.palette.open);
+    }
+
+    #[test]
+    fn cmd_shift_p_toggles_palette() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        workspace.all_commands =
+            crate::workspace::workspace_command_palette::default_command_items();
+
+        workspace.update(
+            WorkspaceMessage::Key(Chord::ch('p', Mods::CMD_SHIFT)),
+            &mut stores,
+        );
+        assert!(workspace.palette.open);
+
+        workspace.update(
+            WorkspaceMessage::Key(Chord::ch('p', Mods::CMD_SHIFT)),
+            &mut stores,
+        );
+        assert!(!workspace.palette.open);
+    }
+
+    #[test]
+    fn palette_new_window_sets_pending_app_command() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        workspace.all_commands =
+            crate::workspace::workspace_command_palette::default_command_items();
+        workspace.update(WorkspaceMessage::TogglePalette, &mut stores);
+        workspace.update(
+            WorkspaceMessage::PaletteQueryChanged("new window".into()),
+            &mut stores,
+        );
+        workspace.update(WorkspaceMessage::PaletteItemClicked(0), &mut stores);
+
+        assert_eq!(
+            workspace.pending_app_command,
+            Some(crate::workspace::workspace_command_palette::CommandId::NewWindow)
+        );
+        assert!(!workspace.palette.open);
+    }
+
+    #[test]
+    fn opening_close_confirmation_dismisses_palette() {
+        use crate::features::ScratchPanel;
+        use crate::features::ScratchMessage;
+        use iced::widget::text_editor;
+
+        let mut stores = AppStores::new();
+        let mut workspace = Workspace::single_pane(
+            PaneState::new(vec![Box::new(ScratchPanel::new())]),
+            ThemeMode::Dark,
+        );
+        workspace.all_commands =
+            crate::workspace::workspace_command_palette::default_command_items();
+        let location = only_center_location(&workspace);
+        workspace.update(WorkspaceMessage::TogglePalette, &mut stores);
+        assert!(workspace.palette.open);
+
+        workspace.update(
+            WorkspaceMessage::Panel {
+                location,
+                tab: 0,
+                message: crate::workspace::erase(ScratchMessage::Edit(
+                    text_editor::Action::Edit(text_editor::Edit::Insert('a')),
+                )),
+            },
+            &mut stores,
+        );
+        workspace.update(
+            WorkspaceMessage::Command(Command::CloseActiveTab),
+            &mut stores,
+        );
+
+        assert!(workspace.close_confirmation.is_some());
+        assert!(!workspace.palette.open);
+    }
+
 }
