@@ -16,7 +16,7 @@ mod features;
 mod shared;
 mod workspace;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use iced::event::{self, Event};
@@ -37,9 +37,9 @@ use crate::workspace::DockVisibility;
 use crate::workspace::workspace_command_palette::default_command_items;
 use crate::workspace::workspace_state::tab_drag_subscription;
 use crate::workspace::{
-    AppStores, Chord, CrossWindowDropPreview, DockSide, DragState, DropTarget, FileLayoutStore,
-    LayoutStore, Mods, PaneState, Panel, PanelKind, PanelRegistry, Workspace, WorkspaceMessage,
-    chord_from_keyboard_event,
+    AppStores, Chord, CrossWindowDropPreview, DirtyPanel, DockSide, DragState, DropTarget,
+    FileLayoutStore, LayoutStore, Mods, PaneState, Panel, PanelKind, PanelLocation, PanelRegistry,
+    Workspace, WorkspaceMessage, chord_from_keyboard_event,
 };
 
 fn main() -> iced::Result {
@@ -62,6 +62,12 @@ fn main() -> iced::Result {
                 registry: build_registry(),
                 layout_store: layout_store.clone(),
                 theme_mode,
+                primary_window: None,
+                window_ordinals: HashMap::new(),
+                next_window_ordinal: 0,
+                pending_close_windows: Vec::new(),
+                close_eval_scheduled: false,
+                app_close_prompt: None,
             };
             (app, open.discard())
         },
@@ -72,6 +78,39 @@ fn main() -> iced::Result {
     .subscription(OpenZone::subscription)
     .theme(OpenZone::theme)
     .run()
+}
+
+/// A dirty tab scoped to a workspace OS window (for app-quit aggregation).
+#[derive(Debug, Clone)]
+struct GlobalDirtyPanel {
+    window: window::Id,
+    window_label: String,
+    location: PanelLocation,
+    tab: usize,
+    title: String,
+}
+
+/// App-level close confirmation before destroying workspace windows.
+#[derive(Debug, Clone)]
+enum AppClosePrompt {
+    Window {
+        target_window: window::Id,
+        panels: Vec<DirtyPanel>,
+    },
+    AppQuit {
+        target_window: window::Id,
+        panels: Vec<GlobalDirtyPanel>,
+    },
+}
+
+impl AppClosePrompt {
+    fn target_window(&self) -> window::Id {
+        match self {
+            Self::Window { target_window, .. } | Self::AppQuit { target_window, .. } => {
+                *target_window
+            }
+        }
+    }
 }
 
 /// The top-level multi-window application state.
@@ -93,6 +132,16 @@ struct OpenZone {
     /// first workspace window and written when the last one closes.
     layout_store: Arc<dyn LayoutStore>,
     theme_mode: ThemeMode,
+    /// First workspace window opened from onboarding; its layout is persisted.
+    primary_window: Option<window::Id>,
+    /// Stable labels for workspace windows (`OpenZone`, `OpenZone (2)`, ...).
+    window_ordinals: HashMap<window::Id, usize>,
+    next_window_ordinal: usize,
+    /// OS windows queued for close after the user confirms discarding dirty tabs.
+    pending_close_windows: Vec<window::Id>,
+    close_eval_scheduled: bool,
+    /// Cross-window dirty close confirmation overlay.
+    app_close_prompt: Option<AppClosePrompt>,
 }
 
 impl OpenZone {
@@ -100,6 +149,14 @@ impl OpenZone {
         match message {
             Message::Onboarding(message) => self.update_onboarding(message),
             Message::Workspace { window, message } => {
+                if self.app_close_prompt.is_some()
+                    && self
+                        .app_close_prompt
+                        .as_ref()
+                        .is_some_and(|prompt| prompt.target_window() == window)
+                {
+                    return Task::none();
+                }
                 if matches!(message, WorkspaceMessage::NewWindow) {
                     return self.open_additional_workspace();
                 }
@@ -136,6 +193,14 @@ impl OpenZone {
                 Task::none()
             }
             Message::OpenWorkspace => self.open_additional_workspace(),
+            Message::WindowCloseRequested(id) => self.on_window_close_requested(id),
+            Message::EvaluatePendingCloses => self.evaluate_pending_closes(),
+            Message::ConfirmAppCloseDiscard => self.confirm_app_close_discard(),
+            Message::ConfirmAppCloseCancel => {
+                self.app_close_prompt = None;
+                self.pending_close_windows.clear();
+                Task::none()
+            }
             Message::WindowClosed(id) => self.handle_window_closed(id),
         }
     }
@@ -163,6 +228,8 @@ impl OpenZone {
         let (workspace_window, open) = window::open(settings);
         let workspace = self.restore_or_build_workspace().with_window_size(size);
         self.workspaces.insert(workspace_window, workspace);
+        self.primary_window = Some(workspace_window);
+        self.register_window_ordinal(workspace_window);
 
         let close = match self.onboarding_window.take() {
             Some(onboarding_window) => {
@@ -185,6 +252,7 @@ impl OpenZone {
             workspace_window,
             build_secondary_workspace(&mut self.stores, self.theme_mode).with_window_size(size),
         );
+        self.register_window_ordinal(workspace_window);
         open.discard()
     }
 
@@ -202,6 +270,7 @@ impl OpenZone {
         workspace.ensure_scratch_fallback();
         workspace.all_commands = default_command_items();
         self.workspaces.insert(workspace_window, workspace);
+        self.register_window_ordinal(workspace_window);
         open.discard()
     }
 
@@ -372,18 +441,187 @@ impl OpenZone {
             self.onboarding = None;
         }
 
-        if let Some(workspace) = self.workspaces.remove(&id)
-            && self.workspaces.is_empty()
-        {
-            let snapshot = workspace::capture(&workspace, &self.stores);
-            let _ = self.layout_store.save(&snapshot);
+        if self.primary_window == Some(id) {
+            self.primary_window = None;
         }
+        self.workspaces.remove(&id);
+        self.window_ordinals.remove(&id);
 
         if self.onboarding_window.is_none() && self.workspaces.is_empty() {
             iced::exit()
         } else {
             Task::none()
         }
+    }
+
+    fn register_window_ordinal(&mut self, id: window::Id) {
+        self.next_window_ordinal += 1;
+        self.window_ordinals.insert(id, self.next_window_ordinal);
+    }
+
+    fn window_label(&self, id: window::Id) -> String {
+        match self.window_ordinals.get(&id) {
+            Some(1) => String::from("OpenZone"),
+            Some(n) => format!("OpenZone ({n})"),
+            None => String::from("OpenZone"),
+        }
+    }
+
+    fn on_window_close_requested(&mut self, id: window::Id) -> Task<Message> {
+        if self.app_close_prompt.is_some() {
+            return Task::none();
+        }
+
+        if self.onboarding_window == Some(id) {
+            return window::close(id);
+        }
+
+        if !self.pending_close_windows.contains(&id) {
+            self.pending_close_windows.push(id);
+        }
+
+        if self.close_eval_scheduled {
+            return Task::none();
+        }
+        self.close_eval_scheduled = true;
+        Task::perform(std::future::ready(()), |_| Message::EvaluatePendingCloses)
+    }
+
+    fn evaluate_pending_closes(&mut self) -> Task<Message> {
+        self.close_eval_scheduled = false;
+        let pending: Vec<window::Id> = self.pending_close_windows.drain(..).collect();
+        if pending.is_empty() {
+            return Task::none();
+        }
+
+        let workspace_ids: HashSet<window::Id> = self.workspaces.keys().copied().collect();
+        let pending_set: HashSet<window::Id> = pending.iter().copied().collect();
+        let is_app_quit = !workspace_ids.is_empty() && pending_set == workspace_ids;
+
+        if is_app_quit {
+            return self.prompt_app_quit();
+        }
+
+        let mut batch = Task::none();
+        for id in pending {
+            batch = Task::batch([batch, self.prompt_or_close_window(id)]);
+        }
+        batch
+    }
+
+    fn prompt_or_close_window(&mut self, id: window::Id) -> Task<Message> {
+        let dirty = self
+            .workspaces
+            .get(&id)
+            .map(Workspace::collect_dirty_panels)
+            .unwrap_or_default();
+        if dirty.is_empty() {
+            return self.force_close_workspace(id);
+        }
+
+        if let Some(workspace) = self.workspaces.get_mut(&id) {
+            workspace.palette.dismiss();
+        }
+        self.app_close_prompt = Some(AppClosePrompt::Window {
+            target_window: id,
+            panels: dirty,
+        });
+        Task::none()
+    }
+
+    fn prompt_app_quit(&mut self) -> Task<Message> {
+        let mut all_dirty = Vec::new();
+        for (id, workspace) in &self.workspaces {
+            let label = self.window_label(*id);
+            for panel in workspace.collect_dirty_panels() {
+                all_dirty.push(GlobalDirtyPanel {
+                    window: *id,
+                    window_label: label.clone(),
+                    location: panel.location,
+                    tab: panel.tab,
+                    title: panel.title,
+                });
+            }
+        }
+
+        if all_dirty.is_empty() {
+            let windows: Vec<window::Id> = self.workspaces.keys().copied().collect();
+            let mut batch = Task::none();
+            for id in windows {
+                batch = Task::batch([batch, self.force_close_workspace(id)]);
+            }
+            return batch;
+        }
+
+        let target_window = self
+            .workspaces
+            .keys()
+            .next()
+            .copied()
+            .expect("app quit implies at least one workspace");
+        if let Some(workspace) = self.workspaces.get_mut(&target_window) {
+            workspace.palette.dismiss();
+        }
+        self.app_close_prompt = Some(AppClosePrompt::AppQuit {
+            target_window,
+            panels: all_dirty,
+        });
+        Task::none()
+    }
+
+    fn confirm_app_close_discard(&mut self) -> Task<Message> {
+        let Some(prompt) = self.app_close_prompt.take() else {
+            return Task::none();
+        };
+
+        match prompt {
+            AppClosePrompt::Window {
+                target_window,
+                panels,
+            } => {
+                if let Some(workspace) = self.workspaces.get_mut(&target_window) {
+                    workspace.discard_dirty_panels(panels, &mut self.stores);
+                }
+                self.force_close_workspace(target_window)
+            }
+            AppClosePrompt::AppQuit { panels, .. } => {
+                let mut by_window: HashMap<window::Id, Vec<DirtyPanel>> = HashMap::new();
+                for panel in panels {
+                    by_window.entry(panel.window).or_default().push(DirtyPanel {
+                        location: panel.location,
+                        tab: panel.tab,
+                        title: panel.title,
+                        message: std::borrow::Cow::Borrowed(""),
+                    });
+                }
+                for (window_id, dirty) in by_window {
+                    if let Some(workspace) = self.workspaces.get_mut(&window_id) {
+                        workspace.discard_dirty_panels(dirty, &mut self.stores);
+                    }
+                }
+                let windows: Vec<window::Id> = self.workspaces.keys().copied().collect();
+                let mut batch = Task::none();
+                for id in windows {
+                    batch = Task::batch([batch, self.force_close_workspace(id)]);
+                }
+                batch
+            }
+        }
+    }
+
+    fn save_primary_layout_if_needed(&mut self, id: window::Id) {
+        if self.primary_window != Some(id) {
+            return;
+        }
+        if let Some(workspace) = self.workspaces.get(&id) {
+            let snapshot = workspace::capture(workspace, &self.stores);
+            let _ = self.layout_store.save(&snapshot);
+        }
+    }
+
+    fn force_close_workspace(&mut self, id: window::Id) -> Task<Message> {
+        self.save_primary_layout_if_needed(id);
+        window::close(id)
     }
 
     fn view(&self, window: window::Id) -> Element<'_, Message> {
@@ -394,8 +632,41 @@ impl OpenZone {
         }
 
         if let Some(workspace) = self.workspaces.get(&window) {
-            return workspace::workspace_view::view(workspace, &self.stores)
+            let base = workspace::workspace_view::view(workspace, &self.stores)
                 .map(move |message| Message::Workspace { window, message });
+            if let Some(prompt) = &self.app_close_prompt
+                && prompt.target_window() == window
+            {
+                let (title, list_items) = match prompt {
+                    AppClosePrompt::Window { panels, .. } => (
+                        Workspace::batch_close_summary(panels).to_string(),
+                        if panels.len() > 1 {
+                            panels
+                                .iter()
+                                .map(|panel| format!("• {}", panel.title))
+                                .collect()
+                        } else {
+                            Vec::new()
+                        },
+                    ),
+                    AppClosePrompt::AppQuit { panels, .. } => (
+                        Workspace::app_quit_close_summary(panels.len()).to_string(),
+                        panels
+                            .iter()
+                            .map(|panel| format!("• {}: {}", panel.window_label, panel.title))
+                            .collect(),
+                    ),
+                };
+                return workspace::workspace_view::close_prompt_overlay(
+                    base,
+                    workspace.theme,
+                    title,
+                    list_items,
+                    Message::ConfirmAppCloseCancel,
+                    Message::ConfirmAppCloseDiscard,
+                );
+            }
+            return base;
         }
 
         iced::widget::container(iced::widget::Space::new())
@@ -445,6 +716,7 @@ impl OpenZone {
         }
 
         streams.push(window::close_events().map(Message::WindowClosed));
+        streams.push(window::close_requests().map(Message::WindowCloseRequested));
 
         Subscription::batch(streams)
     }
@@ -486,6 +758,12 @@ enum Message {
     },
     /// Open another workspace window (title bar or `Cmd+Shift+N`).
     OpenWorkspace,
+    /// User requested closing an OS window (title-bar close or app quit).
+    WindowCloseRequested(window::Id),
+    /// Evaluate batched window close requests after the event loop tick.
+    EvaluatePendingCloses,
+    ConfirmAppCloseDiscard,
+    ConfirmAppCloseCancel,
     WindowClosed(window::Id),
 }
 
@@ -521,6 +799,7 @@ fn onboarding_window_settings() -> window::Settings {
 fn workspace_window_settings() -> window::Settings {
     window::Settings {
         size: Size::new(1100.0, 760.0),
+        exit_on_close_request: false,
         ..window::Settings::default()
     }
 }
@@ -642,6 +921,12 @@ mod cross_window_tab_drop_tests {
             registry: build_registry(),
             layout_store: Arc::new(NoopLayoutStore),
             theme_mode: ThemeMode::Dark,
+            primary_window: None,
+            window_ordinals: HashMap::new(),
+            next_window_ordinal: 0,
+            pending_close_windows: Vec::new(),
+            close_eval_scheduled: false,
+            app_close_prompt: None,
         };
         (app, window_a, window_b)
     }
@@ -1040,5 +1325,103 @@ mod cross_window_tab_drop_tests {
                 .take_torn_off_panel()
                 .is_none()
         );
+    }
+}
+
+#[cfg(test)]
+mod window_close_guard_tests {
+    use super::*;
+    use crate::features::ScratchMessage;
+    use crate::workspace::erase;
+    use iced::widget::text_editor;
+
+    fn open_zone_with_dirty_scratch() -> (OpenZone, window::Id) {
+        let window_id = window::Id::unique();
+        let mut stores = AppStores::new();
+        let mut workspace = build_workspace(&mut stores, ThemeMode::Dark);
+        let location = workspace.focused;
+        workspace.update(
+            WorkspaceMessage::Panel {
+                location,
+                tab: 0,
+                message: erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                    text_editor::Edit::Insert('x'),
+                ))),
+            },
+            &mut stores,
+        );
+        assert_eq!(workspace.collect_dirty_panels().len(), 1);
+
+        let app = OpenZone {
+            onboarding: None,
+            onboarding_window: None,
+            workspaces: HashMap::from([(window_id, workspace)]),
+            stores,
+            persistence: Arc::new(InMemoryOnboardingPersistence::new()),
+            registry: build_registry(),
+            layout_store: Arc::new(NoopLayoutStore),
+            theme_mode: ThemeMode::Dark,
+            primary_window: Some(window_id),
+            window_ordinals: HashMap::from([(window_id, 1)]),
+            next_window_ordinal: 1,
+            pending_close_windows: Vec::new(),
+            close_eval_scheduled: false,
+            app_close_prompt: None,
+        };
+        (app, window_id)
+    }
+
+    #[test]
+    fn close_requested_with_dirty_opens_window_prompt() {
+        let (mut app, window_id) = open_zone_with_dirty_scratch();
+        let _ = app.on_window_close_requested(window_id);
+        let _ = app.evaluate_pending_closes();
+
+        assert!(matches!(
+            app.app_close_prompt,
+            Some(AppClosePrompt::AppQuit { panels, .. }) if panels.len() == 1
+        ));
+    }
+
+    #[test]
+    fn cancel_app_close_prompt_clears_state() {
+        let (mut app, window_id) = open_zone_with_dirty_scratch();
+        let _ = app.on_window_close_requested(window_id);
+        let _ = app.evaluate_pending_closes();
+        let _ = app.update(Message::ConfirmAppCloseCancel);
+
+        assert!(app.app_close_prompt.is_none());
+        assert!(app.pending_close_windows.is_empty());
+        assert_eq!(app.workspaces[&window_id].collect_dirty_panels().len(), 1);
+    }
+
+    #[test]
+    fn discard_app_close_prompt_removes_dirty_tabs() {
+        let (mut app, window_id) = open_zone_with_dirty_scratch();
+        let _ = app.on_window_close_requested(window_id);
+        let _ = app.evaluate_pending_closes();
+        let _ = app.confirm_app_close_discard();
+
+        assert!(app.app_close_prompt.is_none());
+        assert!(app.workspaces[&window_id].collect_dirty_panels().is_empty());
+    }
+
+    #[test]
+    fn simultaneous_close_requests_aggregate_as_app_quit() {
+        let (mut app, window_a) = open_zone_with_dirty_scratch();
+        let window_b = window::Id::unique();
+        let mut stores_b = AppStores::new();
+        let workspace_b = build_secondary_workspace(&mut stores_b, ThemeMode::Dark);
+        app.workspaces.insert(window_b, workspace_b);
+        app.register_window_ordinal(window_b);
+
+        let _ = app.on_window_close_requested(window_a);
+        let _ = app.on_window_close_requested(window_b);
+        let _ = app.evaluate_pending_closes();
+
+        assert!(matches!(
+            app.app_close_prompt,
+            Some(AppClosePrompt::AppQuit { .. })
+        ));
     }
 }

@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::shared::design::ThemeMode;
 use crate::workspace::workspace_dock::{Dock, DockVisibility, Docks};
+use crate::workspace::workspace_layout_metrics::SIDE_DOCK_WIDTH;
 use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_pane_state::PaneState;
 use crate::workspace::workspace_panel::{Panel, PanelKind};
@@ -77,11 +78,17 @@ pub enum CenterNode {
     Pane(PaneSnapshot),
 }
 
+fn default_dock_extent() -> f32 {
+    SIDE_DOCK_WIDTH
+}
+
 /// One edge dock's persisted state: its tab stack plus tri-state visibility.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockSnapshot {
     pub tabs: PaneSnapshot,
     pub visibility: DockVisibility,
+    #[serde(default = "default_dock_extent")]
+    pub extent: f32,
 }
 
 /// The persisted focus location. Center focus is stored as a *leaf
@@ -217,6 +224,7 @@ fn capture_dock(dock: &Dock, stores: &AppStores) -> DockSnapshot {
     DockSnapshot {
         tabs: capture_pane(&dock.tabs, stores),
         visibility: dock.visibility,
+        extent: dock.extent,
     }
 }
 
@@ -297,10 +305,11 @@ fn restore_pane(
 }
 
 fn restore_dock(snapshot: &DockSnapshot, registry: &PanelRegistry, stores: &mut AppStores) -> Dock {
-    Dock {
-        tabs: restore_pane(&snapshot.tabs, registry, stores),
-        visibility: snapshot.visibility,
-    }
+    Dock::with_extent(
+        restore_pane(&snapshot.tabs, registry, stores),
+        snapshot.visibility,
+        snapshot.extent,
+    )
 }
 
 #[cfg(test)]
@@ -461,6 +470,35 @@ mod tests {
 
         assert!(restored.docks.right.is_open());
         assert_eq!(restored.focused, PanelLocation::Dock(DockSide::Right));
+    }
+
+    #[test]
+    fn capture_restore_preserves_dock_extent() {
+        let (mut workspace, stores) = seeded_workspace();
+        workspace.docks.right.extent = 350.0;
+        workspace.docks.bottom.extent = 150.0;
+
+        let snapshot = capture(&workspace, &stores);
+        let mut restored_stores = AppStores::new();
+        let restored = restore(
+            &snapshot,
+            &test_registry(),
+            &mut restored_stores,
+            ThemeMode::Dark,
+        );
+
+        assert_eq!(restored.docks.right.extent, 350.0);
+        assert_eq!(restored.docks.bottom.extent, 150.0);
+    }
+
+    #[test]
+    fn dock_snapshot_deserializes_without_extent_field() {
+        let json = r#"{"tabs":{"tabs":[],"active":0},"visibility":"Hidden"}"#;
+        let snap: DockSnapshot = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(
+            snap.extent,
+            crate::workspace::workspace_layout_metrics::SIDE_DOCK_WIDTH
+        );
     }
 
     #[test]

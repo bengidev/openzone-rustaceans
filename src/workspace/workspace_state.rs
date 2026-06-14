@@ -8,6 +8,8 @@
 //! [`Workspace::update`] (single-writer). The view layer reads this state
 //! by `&self`; only the reducer mutates.
 
+use std::collections::HashMap;
+
 use iced::event::{self, Event};
 use iced::mouse;
 use iced::widget::pane_grid::{self, Axis};
@@ -42,11 +44,27 @@ pub struct CrossWindowDropPreview {
 /// Each OS window owns one `Workspace` (pane tree, docks, focus). Domain
 /// data lives in app-root [`AppStores`], keyed by `window::Id` only at
 /// the daemon routing layer.
-#[derive(Debug, Clone)]
-pub struct CloseConfirmation {
+/// A tab that must be confirmed before closing because it has unsaved changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirtyPanel {
     pub location: PanelLocation,
     pub tab: usize,
+    pub title: String,
     pub message: std::borrow::Cow<'static, str>,
+}
+
+/// Close confirmation overlay state — single tab or a batch of dirty tabs.
+#[derive(Debug, Clone)]
+pub enum CloseConfirmation {
+    Tab {
+        location: PanelLocation,
+        tab: usize,
+        message: std::borrow::Cow<'static, str>,
+    },
+    Batch {
+        panels: Vec<DirtyPanel>,
+        summary: std::borrow::Cow<'static, str>,
+    },
 }
 
 /// Signature for a default dock surface factory.
@@ -396,7 +414,14 @@ impl Workspace {
             match message {
                 WorkspaceMessage::ConfirmCloseDiscard { .. } => {
                     if let Some(confirm) = self.close_confirmation.take() {
-                        self.close_tab_immediately(confirm.location, confirm.tab, stores);
+                        match confirm {
+                            CloseConfirmation::Tab { location, tab, .. } => {
+                                self.close_tab_immediately(location, tab, stores);
+                            }
+                            CloseConfirmation::Batch { panels, .. } => {
+                                self.discard_dirty_panels(panels, stores);
+                            }
+                        }
                     }
                 }
                 WorkspaceMessage::ConfirmCloseCancel => {
@@ -829,6 +854,76 @@ impl Workspace {
         }
     }
 
+    /// Collect every tab across center panes and edge docks that needs close confirmation.
+    pub fn collect_dirty_panels(&self) -> Vec<DirtyPanel> {
+        let mut panels = Vec::new();
+
+        for (pane, pane_state) in self.panes.iter() {
+            Self::collect_dirty_in_pane(pane_state, PanelLocation::Center(*pane), &mut panels);
+        }
+
+        for side in DockSide::ALL {
+            let location = PanelLocation::Dock(side);
+            Self::collect_dirty_in_pane(&self.docks.get(side).tabs, location, &mut panels);
+        }
+
+        panels
+    }
+
+    fn collect_dirty_in_pane(
+        pane_state: &PaneState,
+        location: PanelLocation,
+        panels: &mut Vec<DirtyPanel>,
+    ) {
+        for (tab, panel) in pane_state.tabs.iter().enumerate() {
+            if let CloseRequest::Confirm { message } = panel.close_request() {
+                panels.push(DirtyPanel {
+                    location,
+                    tab,
+                    title: panel.title().into_owned(),
+                    message,
+                });
+            }
+        }
+    }
+
+    /// Build a user-facing summary for a batch close confirmation.
+    pub fn batch_close_summary(panels: &[DirtyPanel]) -> std::borrow::Cow<'static, str> {
+        match panels.len() {
+            0 => std::borrow::Cow::Borrowed(""),
+            1 => std::borrow::Cow::Owned(format!(
+                "Discard unsaved changes in \"{}\"?",
+                panels[0].title
+            )),
+            count => std::borrow::Cow::Owned(format!("Discard unsaved changes in {count} panels?")),
+        }
+    }
+
+    /// Summary copy when quitting the app with dirty panels across windows.
+    pub fn app_quit_close_summary(panel_count: usize) -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Owned(format!("Discard {panel_count} unsaved panels and quit?"))
+    }
+
+    /// Close every listed dirty tab, highest index first within each location.
+    pub fn discard_dirty_panels(&mut self, panels: Vec<DirtyPanel>, stores: &mut AppStores) {
+        let mut by_location: HashMap<PanelLocation, Vec<usize>> = HashMap::new();
+        for panel in panels {
+            by_location
+                .entry(panel.location)
+                .or_default()
+                .push(panel.tab);
+        }
+
+        for (location, mut tabs) in by_location {
+            tabs.sort_unstable();
+            tabs.dedup();
+            tabs.sort_unstable_by(|a, b| b.cmp(a));
+            for tab in tabs {
+                self.close_tab_immediately(location, tab, stores);
+            }
+        }
+    }
+
     /// Close the active tab in the focused pane or dock. The removed
     /// panel's [`Panel::on_close`] runs first so a store-backed panel
     /// (Counter) releases its slot before the box drops; an emptied
@@ -846,7 +941,7 @@ impl Workspace {
             && let Some(CloseRequest::Confirm { message }) = close_req
         {
             self.palette.dismiss();
-            self.close_confirmation = Some(CloseConfirmation {
+            self.close_confirmation = Some(CloseConfirmation::Tab {
                 location: focused,
                 tab: tab_idx,
                 message,
@@ -1318,7 +1413,7 @@ mod tests {
     fn close_confirmation_blocks_underlying_workspace_messages() {
         let (mut workspace, mut stores) = three_tab_workspace();
         let location = only_center_location(&workspace);
-        workspace.close_confirmation = Some(CloseConfirmation {
+        workspace.close_confirmation = Some(CloseConfirmation::Tab {
             location,
             tab: 0,
             message: std::borrow::Cow::Borrowed("Discard changes to untitled?"),
@@ -1346,7 +1441,7 @@ mod tests {
     fn discard_confirmation_closes_stored_tab_after_blocked_input() {
         let (mut workspace, mut stores) = three_tab_workspace();
         let location = only_center_location(&workspace);
-        workspace.close_confirmation = Some(CloseConfirmation {
+        workspace.close_confirmation = Some(CloseConfirmation::Tab {
             location,
             tab: 0,
             message: std::borrow::Cow::Borrowed("Discard changes to untitled?"),
@@ -1948,5 +2043,199 @@ mod tests {
 
         assert!(workspace.close_confirmation.is_some());
         assert!(!workspace.palette.open);
+    }
+    #[test]
+    fn dirty_scratch_survives_tab_drag_to_dock() {
+        use crate::features::ScratchMessage;
+        use crate::features::ScratchPanel;
+        use iced::widget::text_editor;
+
+        let mut stores = AppStores::new();
+        let center = PaneState::new(vec![Box::new(ScratchPanel::new())]);
+        let docks = Docks::empty();
+        let mut workspace = Workspace::with_docks(center, docks, ThemeMode::Dark);
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::Panel {
+                location,
+                tab: 0,
+                message: erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                    text_editor::Edit::Insert('x'),
+                ))),
+            },
+            &mut stores,
+        );
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+        workspace.drag_state.as_mut().unwrap().target = DropTarget::Dock(DockSide::Right);
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        let dirty = workspace.collect_dirty_panels();
+        assert_eq!(dirty.len(), 1);
+        assert_eq!(dirty[0].location, PanelLocation::Dock(DockSide::Right));
+        assert_eq!(dirty[0].tab, 0);
+        assert_eq!(dirty[0].title, "untitled");
+    }
+
+    #[test]
+    fn collect_dirty_finds_multiple_locations() {
+        use crate::features::ScratchMessage;
+        use crate::features::ScratchPanel;
+        use iced::widget::text_editor;
+
+        let mut stores = AppStores::new();
+        let center = PaneState::new(vec![
+            Box::new(ScratchPanel::new()) as Box<dyn Panel>,
+            Box::new(TextPanel::new()),
+        ]);
+        let docks = Docks::new(
+            PaneState::empty(),
+            PaneState::new(vec![Box::new(ScratchPanel::new())]),
+            PaneState::empty(),
+        );
+        let mut workspace = Workspace::with_docks(center, docks, ThemeMode::Dark);
+        let center_location = only_center_location(&workspace);
+        let dock_location = PanelLocation::Dock(DockSide::Right);
+
+        workspace.update(
+            WorkspaceMessage::Panel {
+                location: center_location,
+                tab: 0,
+                message: erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                    text_editor::Edit::Insert('a'),
+                ))),
+            },
+            &mut stores,
+        );
+        workspace.update(
+            WorkspaceMessage::Panel {
+                location: dock_location,
+                tab: 0,
+                message: erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                    text_editor::Edit::Insert('b'),
+                ))),
+            },
+            &mut stores,
+        );
+
+        let dirty = workspace.collect_dirty_panels();
+        assert_eq!(dirty.len(), 2);
+        assert_eq!(dirty[0].location, center_location);
+        assert_eq!(dirty[0].tab, 0);
+        assert_eq!(dirty[1].location, dock_location);
+        assert_eq!(dirty[1].tab, 0);
+    }
+
+    #[test]
+    fn batch_discard_removes_all_listed_tabs() {
+        use crate::features::ScratchMessage;
+        use crate::features::ScratchPanel;
+        use iced::widget::text_editor;
+
+        let mut stores = AppStores::new();
+        let center = PaneState::new(vec![
+            Box::new(ScratchPanel::new()) as Box<dyn Panel>,
+            Box::new(TextPanel::new()),
+        ]);
+        let docks = Docks::new(
+            PaneState::empty(),
+            PaneState::new(vec![Box::new(ScratchPanel::new())]),
+            PaneState::empty(),
+        );
+        let mut workspace = Workspace::with_docks(center, docks, ThemeMode::Dark);
+        let center_location = only_center_location(&workspace);
+        let dock_location = PanelLocation::Dock(DockSide::Right);
+
+        workspace.update(
+            WorkspaceMessage::Panel {
+                location: center_location,
+                tab: 0,
+                message: erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                    text_editor::Edit::Insert('a'),
+                ))),
+            },
+            &mut stores,
+        );
+        workspace.update(
+            WorkspaceMessage::Panel {
+                location: dock_location,
+                tab: 0,
+                message: erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                    text_editor::Edit::Insert('b'),
+                ))),
+            },
+            &mut stores,
+        );
+
+        let dirty = workspace.collect_dirty_panels();
+        assert_eq!(dirty.len(), 2);
+
+        workspace.close_confirmation = Some(CloseConfirmation::Batch {
+            panels: dirty.clone(),
+            summary: Workspace::batch_close_summary(&dirty),
+        });
+
+        workspace.update(
+            WorkspaceMessage::ConfirmCloseDiscard {
+                location: center_location,
+                tab: 99,
+            },
+            &mut stores,
+        );
+
+        assert!(workspace.collect_dirty_panels().is_empty());
+        assert!(workspace.close_confirmation.is_none());
+
+        let PanelLocation::Center(pane) = center_location else {
+            panic!("expected center location");
+        };
+        assert_eq!(workspace.panes.get(pane).unwrap().len(), 1);
+        assert_eq!(workspace.panes.get(pane).unwrap().tabs[0].title(), "Text");
+        assert!(workspace.docks.right.tabs.is_empty());
+    }
+
+    #[test]
+    fn batch_close_confirmation_discard_uses_descending_tab_order_per_location() {
+        use crate::features::ScratchMessage;
+        use crate::features::ScratchPanel;
+        use iced::widget::text_editor;
+
+        let mut stores = AppStores::new();
+        let center = PaneState::new(vec![
+            Box::new(ScratchPanel::new()) as Box<dyn Panel>,
+            Box::new(ScratchPanel::new()) as Box<dyn Panel>,
+            Box::new(TextPanel::new()),
+        ]);
+        let mut workspace = Workspace::single_pane(center, ThemeMode::Dark);
+        let location = only_center_location(&workspace);
+
+        for tab in [0usize, 1] {
+            workspace.update(
+                WorkspaceMessage::Panel {
+                    location,
+                    tab,
+                    message: erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                        text_editor::Edit::Insert('x'),
+                    ))),
+                },
+                &mut stores,
+            );
+        }
+
+        let dirty = workspace.collect_dirty_panels();
+        assert_eq!(dirty.len(), 2);
+
+        workspace.discard_dirty_panels(dirty, &mut stores);
+
+        let PanelLocation::Center(pane) = location else {
+            panic!("expected center location");
+        };
+        let pane_state = workspace.panes.get(pane).unwrap();
+        assert_eq!(pane_state.len(), 1);
+        assert_eq!(pane_state.tabs[0].title(), "Text");
     }
 }
