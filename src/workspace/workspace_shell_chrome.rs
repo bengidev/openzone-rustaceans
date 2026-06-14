@@ -154,7 +154,7 @@ pub fn shell_smoke_snapshot(workspace: &Workspace) -> ShellSmokeSnapshot {
         palette_open: workspace.palette.open,
         palette_has_visual_backdrop: PaletteOverlaySpec::current().has_visual_backdrop,
         close_confirmation_open: workspace.close_confirmation.is_some(),
-        focused_uses_accent_border: true,
+        focused_uses_accent_border: focused_pane_uses_accent_border(workspace.theme),
         drop_preview_uses_fill: drop_preview_uses_fill(),
     }
 }
@@ -187,8 +187,10 @@ pub fn dock_control_color(theme: OpenZoneTheme, visibility: DockVisibility) -> C
     }
 }
 
-pub fn location_is_focused(workspace: &Workspace, location: PanelLocation) -> bool {
-    workspace.is_focused(location)
+/// Whether focused pane/dock chrome uses accent borders per the shell contract.
+pub fn focused_pane_uses_accent_border(theme: OpenZoneTheme) -> bool {
+    pane_border_color(theme, true) == theme.foreground(ForegroundToken::Accent)
+        && pane_border_width(true) == 2.0
 }
 
 #[cfg(test)]
@@ -207,6 +209,12 @@ mod tests {
 
     fn theme() -> OpenZoneTheme {
         OpenZoneTheme::dark()
+    }
+
+
+    #[test]
+    fn focused_pane_accent_border_contract() {
+        assert!(focused_pane_uses_accent_border(theme()));
     }
 
     #[test]

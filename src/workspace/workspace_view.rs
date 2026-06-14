@@ -418,7 +418,6 @@ fn dock_control_button<'a>(
     let dock = workspace.docks.get(side);
     use crate::workspace::workspace_command::Command;
 
-    let _is_empty = dock.is_empty();
     let visibility = dock.visibility;
 
     let color = shell_chrome::dock_control_color(theme, visibility);
@@ -1014,7 +1013,15 @@ fn palette_overlay<'a>(
         ..container::Style::default()
     });
 
-    container(dropdown_card)
+    // Invisible click-catcher: modal without a visible backdrop.
+    let click_catcher = mouse_area(
+        container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .on_press(WorkspaceMessage::PaletteDismiss);
+
+    let positioned = container(dropdown_card)
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(Horizontal::Center)
@@ -1022,7 +1029,11 @@ fn palette_overlay<'a>(
         .padding(Padding {
             top: palette_spec.top_inset,
             ..Padding::ZERO
-        })
+        });
+
+    stack![click_catcher, positioned]
+        .width(Length::Fill)
+        .height(Length::Fill)
         .into()
 }
 

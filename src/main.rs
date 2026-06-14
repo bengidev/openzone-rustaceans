@@ -525,8 +525,10 @@ impl OpenZone {
             return batch;
         }
 
-        // Aggregate into a quit prompt when closing the last remaining window
-        // or when a clean window was already closed in this batch.
+        // Aggregate into an app-quit prompt when every workspace is closing and at
+        // least one clean window already closed in this batch (or this is the only
+        // window). Otherwise prompt dirty windows one at a time — e.g. two dirty
+        // windows closing together each get their own discard dialog, not quit.
         if closing_all_workspaces
             && (closed_clean_window || (pending_count == 1 && workspace_ids.len() == 1))
         {
