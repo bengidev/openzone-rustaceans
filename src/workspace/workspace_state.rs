@@ -501,13 +501,10 @@ impl Workspace {
             }
             WorkspaceMessage::CursorMoved(cursor) => {
                 if let Some(drag) = self.drag_state.as_ref() {
-                    let (grid, pane_bounds, (rails, bodies)) = self.drag_geometry();
+                    let geometry = self.drop_geometry();
                     let target = crate::workspace::workspace_drag::compute_drop_target(
                         cursor,
-                        grid,
-                        &pane_bounds,
-                        &rails,
-                        &bodies,
+                        &geometry,
                         &self.docks,
                         Some(drag),
                     );
@@ -1743,6 +1740,40 @@ mod tests {
             panic!("expected center");
         };
         assert_eq!(workspace.panes.get(pane).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn hidden_dock_stays_hidden_during_drag_and_opens_on_drop() {
+        use crate::workspace::workspace_layout_metrics::{self, DOCK_RAIL_THICKNESS};
+
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+        assert!(workspace.docks.left.is_hidden());
+
+        let inner = workspace_layout_metrics::framed_inner(workspace.window_size);
+        workspace.update(
+            WorkspaceMessage::CursorMoved(iced::Point::new(
+                inner.x + DOCK_RAIL_THICKNESS / 2.0,
+                inner.y + inner.height / 2.0,
+            )),
+            &mut stores,
+        );
+
+        assert!(workspace.docks.left.is_hidden());
+        assert_eq!(
+            workspace.drag_state.as_ref().unwrap().target,
+            DropTarget::Dock(DockSide::Left)
+        );
+
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        assert!(workspace.docks.left.is_open());
+        assert_eq!(workspace.docks.left.tabs.len(), 1);
     }
 
     #[test]

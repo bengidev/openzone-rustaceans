@@ -773,6 +773,7 @@ fn drop_overlay<'a>(
             &rails,
             &bodies,
             &workspace.docks,
+            workspace.window_size,
             Some(&preview_state.drag),
         );
         (preview, None)
@@ -786,6 +787,7 @@ fn drop_overlay<'a>(
             &rails,
             &bodies,
             &workspace.docks,
+            workspace.window_size,
             Some(drag),
         );
         let ghost = drag.pointer_moved.then(|| {
