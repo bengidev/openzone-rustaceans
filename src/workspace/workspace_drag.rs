@@ -487,7 +487,7 @@ pub fn compute_drop_target(
 
     // 4. Outer window edges for hidden docks (active drag only).
     if drag.is_some() {
-        for &(side, edge) in &compute_hidden_dock_edge_zones(docks, window_size) {
+        for &(side, edge) in &geometry.hidden_dock_edge_zones {
             if edge.width > 0.0 && edge.height > 0.0 && edge.contains(cursor) {
                 return DropTarget::Dock(side);
             }
@@ -803,6 +803,7 @@ pub struct WindowDropGeometry {
     pub pane_bounds: Vec<PaneBounds>,
     pub dock_rails: Vec<(DockSide, Rectangle)>,
     pub dock_bodies: Vec<(DockSide, Rectangle)>,
+    pub hidden_dock_edge_zones: [(DockSide, Rectangle); 3],
 }
 
 /// Resolve a drop target within a single window's precomputed geometry.
@@ -872,6 +873,7 @@ mod tests {
             pane_bounds,
             dock_rails: rails.to_vec(),
             dock_bodies: bodies.to_vec(),
+            hidden_dock_edge_zones: compute_hidden_dock_edge_zones(docks, window_size),
         }
     }
 
@@ -1075,6 +1077,7 @@ mod tests {
                 pane_bounds,
                 dock_rails: rails.to_vec(),
                 dock_bodies: bodies.to_vec(),
+                hidden_dock_edge_zones: compute_hidden_dock_edge_zones(&docks, window_size),
             },
         )
     }
@@ -1101,6 +1104,7 @@ mod tests {
                 pane_bounds,
                 dock_rails: rails.to_vec(),
                 dock_bodies: bodies.to_vec(),
+                hidden_dock_edge_zones: compute_hidden_dock_edge_zones(&docks, window_size),
             },
         )
     }
@@ -1209,6 +1213,44 @@ mod tests {
 
     fn drag_state_for(location: PanelLocation, tab: usize) -> DragState {
         DragState::new(location, tab)
+    }
+
+    #[test]
+    fn hidden_dock_edge_zone_targets_right_dock_during_drag() {
+        let (panes, _first) = single_pane_grid();
+        let window = Size::new(1024.0, 768.0);
+        let docks = Docks::empty();
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
+        let inner = workspace_layout_metrics::framed_inner(window);
+        let drag = drag_state_for(PanelLocation::Center(geometry.pane_bounds[0].pane), 0);
+
+        let cursor = Point::new(
+            inner.x + inner.width - HIDDEN_DOCK_EDGE_THICKNESS / 2.0,
+            inner.y + inner.height / 2.0,
+        );
+        let target = compute_drop_target(cursor, &geometry, &docks, Some(&drag));
+
+        assert_eq!(target, DropTarget::Dock(DockSide::Right));
+        assert!(docks.right.is_hidden());
+    }
+
+    #[test]
+    fn hidden_dock_edge_zone_targets_bottom_dock_during_drag() {
+        let (panes, _first) = single_pane_grid();
+        let window = Size::new(1024.0, 768.0);
+        let docks = Docks::empty();
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
+        let inner = workspace_layout_metrics::framed_inner(window);
+        let drag = drag_state_for(PanelLocation::Center(geometry.pane_bounds[0].pane), 0);
+
+        let cursor = Point::new(
+            inner.x + inner.width / 2.0,
+            inner.y + inner.height - HIDDEN_DOCK_EDGE_THICKNESS / 2.0,
+        );
+        let target = compute_drop_target(cursor, &geometry, &docks, Some(&drag));
+
+        assert_eq!(target, DropTarget::Dock(DockSide::Bottom));
+        assert!(docks.bottom.is_hidden());
     }
 
     #[test]

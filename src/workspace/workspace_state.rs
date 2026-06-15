@@ -22,7 +22,7 @@ use crate::workspace::workspace_command_palette::{CommandId, CommandItem, Palett
 use crate::workspace::workspace_dock::{DockVisibility, Docks};
 use crate::workspace::workspace_drag::{
     Direction, DockRegions, DragState, DropTarget, PaneBounds, SplitPaneTarget, TabStripTarget,
-    WindowDropGeometry, resolve_drop_target_in_geometry,
+    WindowDropGeometry, compute_hidden_dock_edge_zones, resolve_drop_target_in_geometry,
 };
 use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_message::WorkspaceMessage;
@@ -289,11 +289,11 @@ impl Workspace {
                 .map(|(pane, _)| *pane)
                 .unwrap_or_else(|| *self.panes.iter().next().unwrap().0);
             let closing_focused = self.focused == PanelLocation::Center(pane);
-            if let Some((_, sibling)) = self.panes.close(pane) {
-                if closing_focused {
-                    self.focused = PanelLocation::Center(sibling);
-                }
-            } else {
+            if let Some((_, sibling)) = self.panes.close(pane)
+                && closing_focused
+            {
+                self.focused = PanelLocation::Center(sibling);
+            } else if self.panes.get(pane).is_some() {
                 break;
             }
         }
@@ -305,14 +305,13 @@ impl Workspace {
             .map(|(pane, _)| *pane)
             .or_else(|| self.panes.iter().next().map(|(pane, _)| *pane));
 
-        if let Some(pane) = target_pane {
-            if let Some(ps) = self.panes.get_mut(pane) {
-                if ps.is_empty() {
-                    ps.tabs.push(factory());
-                    ps.active = 0;
-                    self.focused = PanelLocation::Center(pane);
-                }
-            }
+        if let Some(pane) = target_pane
+            && let Some(ps) = self.panes.get_mut(pane)
+            && ps.is_empty()
+        {
+            ps.tabs.push(factory());
+            ps.active = 0;
+            self.focused = PanelLocation::Center(pane);
         }
     }
 
@@ -331,28 +330,27 @@ impl Workspace {
     fn reconcile_empty_center_pane(&mut self, pane: pane_grid::Pane) {
         if self.panes.len() > 1 && self.workbench_has_other_tabs_than(pane) {
             let closing_focused = self.focused == PanelLocation::Center(pane);
-            if let Some((_, sibling)) = self.panes.close(pane) {
-                if closing_focused {
-                    self.focused = PanelLocation::Center(sibling);
-                }
+            if let Some((_, sibling)) = self.panes.close(pane)
+                && closing_focused
+            {
+                self.focused = PanelLocation::Center(sibling);
             }
             return;
         }
 
-        if let Some(factory) = self.scratch_factory {
-            if let Some(ps) = self.panes.get_mut(pane) {
-                if ps.is_empty() {
-                    ps.tabs.push(factory());
-                    ps.active = 0;
-                    self.focused = PanelLocation::Center(pane);
-                }
-            }
+        if let Some(factory) = self.scratch_factory
+            && let Some(ps) = self.panes.get_mut(pane)
+            && ps.is_empty()
+        {
+            ps.tabs.push(factory());
+            ps.active = 0;
+            self.focused = PanelLocation::Center(pane);
         } else if self.panes.len() > 1 {
             let closing_focused = self.focused == PanelLocation::Center(pane);
-            if let Some((_, sibling)) = self.panes.close(pane) {
-                if closing_focused {
-                    self.focused = PanelLocation::Center(sibling);
-                }
+            if let Some((_, sibling)) = self.panes.close(pane)
+                && closing_focused
+            {
+                self.focused = PanelLocation::Center(sibling);
             }
         }
     }
@@ -382,6 +380,7 @@ impl Workspace {
             pane_bounds,
             dock_rails: rails.to_vec(),
             dock_bodies: bodies.to_vec(),
+            hidden_dock_edge_zones: compute_hidden_dock_edge_zones(&self.docks, self.window_size),
         }
     }
 
@@ -805,11 +804,11 @@ impl Workspace {
         let Some(factory) = self.scratch_factory else {
             return;
         };
-        if let Some(ps) = self.panes.get_mut(pane) {
-            if ps.is_empty() {
-                ps.tabs.push(factory());
-                ps.active = 0;
-            }
+        if let Some(ps) = self.panes.get_mut(pane)
+            && ps.is_empty()
+        {
+            ps.tabs.push(factory());
+            ps.active = 0;
         }
     }
 
