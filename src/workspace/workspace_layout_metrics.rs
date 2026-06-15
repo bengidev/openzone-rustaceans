@@ -3,7 +3,7 @@
 //! Every constant here is derived from the same design tokens the view
 //! uses so hit-testing and preview overlays line up with painted widgets.
 
-use iced::{Rectangle, Size};
+use iced::{Point, Rectangle, Size};
 
 use crate::shared::design::{SpacingToken, TypeRole};
 use crate::workspace::workspace_dock::{Dock, DockVisibility, Docks};
@@ -21,8 +21,14 @@ pub const FRAMED_PADDING: f32 = 0.0;
 pub const MAIN_AXIS_SPACING: f32 = SHELL_GUTTER;
 /// Seam between split workbench panes.
 pub const PANE_GRID_SPACING: f32 = SHELL_GUTTER;
+/// Pane/dock body outline width (must match [`crate::workspace::workspace_shell_chrome::pane_border_width`]).
+pub const PANE_BORDER_WIDTH: f32 = 1.0;
+/// Extra inset between drop previews and painted pane chrome.
+pub const PREVIEW_PAD: f32 = 2.0;
 
 const BAR_BORDER: f32 = 1.0;
+/// Tab chip underline thickness; keep in sync with shell chrome.
+const TAB_CHIP_UNDERLINE: f32 = 1.0;
 
 fn type_line_height(role: TypeRole) -> f32 {
     role.size() * role.line_height()
@@ -42,7 +48,15 @@ pub fn status_bar_height() -> f32 {
 
 /// Height of a pane or dock tab strip (container + chip + label).
 pub fn tab_strip_height() -> f32 {
-    SpacingToken::S1.value() * 2.0 + type_line_height(TypeRole::LabelMd) + BAR_BORDER
+    let chip_pad = SpacingToken::S1.value() * 2.0;
+    let scroll_pad = SpacingToken::S1.value() * 2.0;
+    chip_pad + type_line_height(TypeRole::LabelMd) + TAB_CHIP_UNDERLINE + scroll_pad + BAR_BORDER
+}
+
+/// Top-left of the framed workbench in window coordinates.
+pub fn workspace_origin(window_size: Size) -> Point {
+    let area = workspace_area(window_size);
+    Point::new(area.x, area.y)
 }
 
 /// Estimated width of a single tab chip for ghost rendering.

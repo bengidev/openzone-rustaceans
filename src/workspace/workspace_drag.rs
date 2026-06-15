@@ -11,9 +11,9 @@ use iced::{Point, Rectangle, Size};
 
 use crate::workspace::workspace_dock::{DockVisibility, Docks};
 use crate::workspace::workspace_layout_metrics::{
-    self, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, MAIN_AXIS_SPACING, PANE_GRID_SPACING,
-    SIDE_DOCK_WIDTH, dock_horizontal_extent, estimated_tab_width, tab_chip_spacing,
-    tab_strip_height, tab_strip_padding,
+    self, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, MAIN_AXIS_SPACING, PANE_BORDER_WIDTH,
+    PANE_GRID_SPACING, PREVIEW_PAD, SIDE_DOCK_WIDTH, dock_horizontal_extent, estimated_tab_width,
+    tab_chip_spacing, tab_strip_height, tab_strip_padding,
 };
 use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_pane_state::PaneState;
@@ -92,7 +92,7 @@ pub struct PaneBounds {
 pub type DockRegions = ([(DockSide, Rectangle); 3], [(DockSide, Rectangle); 3]);
 
 const SPLIT_EDGE_FRACTION: f32 = 0.25;
-const TAB_INSERT_MARKER_WIDTH: f32 = 2.0;
+pub const TAB_INSERT_MARKER_WIDTH: f32 = 2.0;
 /// Thin outer window bezel for hidden-dock drops during tab drag.
 const HIDDEN_DOCK_EDGE_THICKNESS: f32 = 6.0;
 
@@ -726,7 +726,7 @@ fn dock_preview_bounds(
         .iter()
         .find_map(|&(dock_side, body)| {
             if dock_side == side && body.width > 0.0 && body.height > 0.0 {
-                Some(body)
+                Some(inset_preview_rect(body))
             } else {
                 None
             }
@@ -734,7 +734,7 @@ fn dock_preview_bounds(
         .or_else(|| {
             dock_rails.iter().find_map(|&(dock_side, rail)| {
                 if dock_side == side && rail.width > 0.0 && rail.height > 0.0 {
-                    Some(rail)
+                    Some(inset_preview_rect(rail))
                 } else {
                     None
                 }
@@ -744,39 +744,49 @@ fn dock_preview_bounds(
             docks
                 .get(side)
                 .is_hidden()
-                .then(|| projected_open_dock_body(side, docks, window_size))
+                .then(|| inset_preview_rect(projected_open_dock_body(side, docks, window_size)))
         })
 }
 
+/// Shrink preview geometry so it sits inside painted pane/dock borders.
+fn inset_preview_rect(rect: Rectangle) -> Rectangle {
+    let inset = PANE_BORDER_WIDTH + PREVIEW_PAD;
+    Rectangle {
+        x: rect.x + inset,
+        y: rect.y + inset,
+        width: (rect.width - inset * 2.0).max(0.0),
+        height: (rect.height - inset * 2.0).max(0.0),
+    }
+}
+
+fn pane_inner_bounds(pb: &PaneBounds) -> Rectangle {
+    inset_preview_rect(pb.bounds)
+}
+
 fn split_preview_rect(pb: &PaneBounds, direction: Direction) -> Rectangle {
-    let strip_h = tab_strip_height();
-    let body = Rectangle {
-        x: pb.bounds.x,
-        y: pb.bounds.y + strip_h,
-        width: pb.bounds.width,
-        height: (pb.bounds.height - strip_h).max(0.0),
-    };
+    let pane = pane_inner_bounds(pb);
+    let half_gap = PANE_GRID_SPACING / 2.0;
 
     match direction {
         Direction::Left => Rectangle {
-            width: body.width / 2.0,
-            ..body
+            width: (pane.width / 2.0 - half_gap).max(0.0),
+            ..pane
         },
         Direction::Right => Rectangle {
-            x: body.x + body.width / 2.0,
-            width: body.width / 2.0,
-            y: body.y,
-            height: body.height,
+            x: pane.x + pane.width / 2.0 + half_gap,
+            width: (pane.width / 2.0 - half_gap).max(0.0),
+            y: pane.y,
+            height: pane.height,
         },
         Direction::Up => Rectangle {
-            height: body.height / 2.0,
-            ..body
+            height: (pane.height / 2.0 - half_gap).max(0.0),
+            ..pane
         },
         Direction::Down => Rectangle {
-            x: body.x,
-            y: body.y + body.height / 2.0,
-            width: body.width,
-            height: body.height / 2.0,
+            x: pane.x,
+            y: pane.y + pane.height / 2.0 + half_gap,
+            width: pane.width,
+            height: (pane.height / 2.0 - half_gap).max(0.0),
         },
     }
 }
@@ -987,11 +997,26 @@ mod tests {
         let pane_bounds = compute_pane_bounds(&panes, grid_bounds_800x500());
         let pb = &pane_bounds[0];
         let preview = split_preview_rect(pb, Direction::Right);
-        let body_h = pb.bounds.height - tab_strip_height();
-        assert!((preview.width - pb.bounds.width / 2.0).abs() < 0.5);
-        assert!((preview.height - body_h).abs() < 0.5);
-        assert!((preview.x - (pb.bounds.x + pb.bounds.width / 2.0)).abs() < 0.5);
+        let pane = pane_inner_bounds(pb);
+        let half_gap = PANE_GRID_SPACING / 2.0;
+        assert!((preview.width - (pane.width / 2.0 - half_gap)).abs() < 0.5);
+        assert!((preview.height - pane.height).abs() < 0.5);
+        assert!((preview.x - (pane.x + pane.width / 2.0 + half_gap)).abs() < 0.5);
         let _ = first;
+    }
+
+    #[test]
+    fn split_preview_sits_inside_pane_border() {
+        let (panes, _first) = single_pane_grid();
+        let pane_bounds = compute_pane_bounds(&panes, grid_bounds_800x500());
+        let pb = &pane_bounds[0];
+        let preview = split_preview_rect(pb, Direction::Left);
+        let inset = PANE_BORDER_WIDTH + PREVIEW_PAD;
+
+        assert!(preview.x >= pb.bounds.x + inset);
+        assert!(preview.y >= pb.bounds.y + inset);
+        assert!(preview.x + preview.width <= pb.bounds.x + pb.bounds.width - inset);
+        assert!(preview.y + preview.height <= pb.bounds.y + pb.bounds.height - inset);
     }
 
     #[test]
@@ -1301,8 +1326,10 @@ mod tests {
         let preview = dock_preview_bounds(DockSide::Left, &rails, &bodies, &docks, window)
             .expect("hidden dock preview");
 
-        assert!((preview.width - custom_extent).abs() < 0.5);
+        assert!(
+            (preview.width - (custom_extent - (PANE_BORDER_WIDTH + PREVIEW_PAD) * 2.0)).abs() < 0.5
+        );
         let inner = workspace_layout_metrics::framed_inner(window);
-        assert!((preview.x - inner.x).abs() < 0.5);
+        assert!((preview.x - (inner.x + PANE_BORDER_WIDTH + PREVIEW_PAD)).abs() < 0.5);
     }
 }

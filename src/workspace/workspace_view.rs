@@ -58,43 +58,42 @@ pub fn view<'a>(workspace: &'a Workspace, stores: &'a AppStores) -> Element<'a, 
     .height(Length::Fill)
     .spacing(layout_metrics::SHELL_GUTTER);
 
-    let body = column![main_row, dock_bottom(workspace, stores, theme)]
+    let workbench_body = column![main_row, dock_bottom(workspace, stores, theme)]
         .width(Length::Fill)
         .height(Length::Fill)
         .spacing(layout_metrics::SHELL_GUTTER);
 
-    let framed = container(body)
+    let workbench =
+        if workspace.drag_state.is_some() || workspace.cross_window_drop_preview.is_some() {
+            Element::from(
+                stack![workbench_body, drop_overlay(workspace, theme)]
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+        } else {
+            workbench_body.into()
+        };
+
+    let framed = container(workbench)
         .width(Length::Fill)
         .height(Length::Fill)
         .padding(layout_metrics::FRAMED_PADDING)
         .style(move |_| surface_style(theme, BackgroundToken::Primary));
 
-    let shell = column![title_bar(theme), framed, status_bar(theme, workspace)]
+    let mut decorated = column![title_bar(theme), framed, status_bar(theme, workspace)]
         .width(Length::Fill)
-        .height(Length::Fill);
-
-    let decorated =
-        if workspace.drag_state.is_some() || workspace.cross_window_drop_preview.is_some() {
-            Element::from(
-                stack![shell, drop_overlay(workspace, theme)]
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-            )
-        } else {
-            shell.into()
-        };
+        .height(Length::Fill)
+        .into();
 
     // Palette overlay: top-centered dropdown below the title bar.
-    let decorated = if workspace.palette.open {
+    if workspace.palette.open {
         let overlay_elem = palette_overlay(theme, workspace);
-        Element::from(
+        decorated = Element::from(
             stack![decorated, overlay_elem]
                 .width(Length::Fill)
                 .height(Length::Fill),
-        )
-    } else {
-        decorated
-    };
+        );
+    }
 
     if let Some(confirm) = &workspace.close_confirmation {
         let (title, list_items, discard_message) = match confirm {
@@ -190,7 +189,6 @@ fn dock_side<'a>(
         return container(body)
             .width(Length::Fixed(dock.extent))
             .height(Length::Fill)
-            .style(move |_| pane_frame_style(theme, focused))
             .into();
     }
 
@@ -219,7 +217,6 @@ fn dock_bottom<'a>(
         return container(body)
             .width(Length::Fill)
             .height(Length::Fixed(dock.extent))
-            .style(move |_| pane_frame_style(theme, focused))
             .into();
     }
 
@@ -514,6 +511,9 @@ fn pane_body<'a>(
         .height(Length::Fill)
         .padding(SpacingToken::S4.value());
 
+    let chrome_focused =
+        focused && workspace.drag_state.is_none() && workspace.cross_window_drop_preview.is_none();
+
     let inner = column![strip, body]
         .width(Length::Fill)
         .height(Length::Fill);
@@ -521,7 +521,7 @@ fn pane_body<'a>(
     container(inner)
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(move |_| pane_frame_style(theme, focused))
+        .style(move |_| pane_frame_style(theme, chrome_focused))
         .into()
 }
 
@@ -809,11 +809,13 @@ fn drop_overlay<'a>(
 
     let accent = theme.foreground(ForegroundToken::Accent);
     let elevated = theme.background(BackgroundToken::Elevated);
+    let origin = layout_metrics::workspace_origin(workspace.window_size);
     Canvas::new(DropOverlay {
         preview,
         ghost,
         accent,
         elevated,
+        origin,
     })
     .width(Length::Fill)
     .height(Length::Fill)
@@ -833,6 +835,16 @@ struct DropOverlay {
     ghost: Option<GhostTab>,
     accent: Color,
     elevated: Color,
+    origin: Point,
+}
+
+fn localize_rect(rect: Rectangle, origin: Point) -> Rectangle {
+    Rectangle {
+        x: rect.x - origin.x,
+        y: rect.y - origin.y,
+        width: rect.width,
+        height: rect.height,
+    }
 }
 
 impl<Message> Program<Message> for DropOverlay {
@@ -852,16 +864,35 @@ impl<Message> Program<Message> for DropOverlay {
             && rect.width > 0.0
             && rect.height > 0.0
         {
-            frame.stroke_rectangle(
-                Point::new(rect.x, rect.y),
-                Size::new(rect.width, rect.height),
-                Stroke::default().with_width(2.0).with_color(self.accent),
-            );
+            let rect = localize_rect(rect, self.origin);
+            let is_insert_marker = rect.width <= drag::TAB_INSERT_MARKER_WIDTH + 0.5
+                || rect.height <= drag::TAB_INSERT_MARKER_WIDTH + 0.5;
+            if is_insert_marker {
+                frame.fill_rectangle(
+                    Point::new(rect.x, rect.y),
+                    Size::new(rect.width, rect.height),
+                    self.accent,
+                );
+            } else {
+                let fill = Color {
+                    a: 0.16,
+                    ..self.accent
+                };
+                frame.fill_rectangle(
+                    Point::new(rect.x, rect.y),
+                    Size::new(rect.width, rect.height),
+                    fill,
+                );
+            }
         }
 
         if let Some(ghost) = &self.ghost {
+            let position = Point::new(
+                ghost.position.x - self.origin.x,
+                ghost.position.y - self.origin.y,
+            );
             frame.stroke_rectangle(
-                ghost.position,
+                position,
                 ghost.size,
                 Stroke::default().with_width(1.0).with_color(self.accent),
             );
