@@ -11,9 +11,9 @@ use iced::{Point, Rectangle, Size};
 
 use crate::workspace::workspace_dock::{DockVisibility, Docks};
 use crate::workspace::workspace_layout_metrics::{
-    self, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, MAIN_AXIS_SPACING, PANE_GRID_SPACING,
-    SIDE_DOCK_WIDTH, dock_horizontal_extent, estimated_tab_width, tab_chip_spacing,
-    tab_strip_height, tab_strip_padding,
+    self, BOTTOM_DOCK_HEIGHT, DOCK_RAIL_THICKNESS, MAIN_AXIS_SPACING, PANE_BORDER_WIDTH,
+    PANE_GRID_SPACING, PREVIEW_PAD, SIDE_DOCK_WIDTH, dock_horizontal_extent, estimated_tab_width,
+    tab_chip_spacing, tab_strip_height, tab_strip_padding,
 };
 use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_pane_state::PaneState;
@@ -92,7 +92,9 @@ pub struct PaneBounds {
 pub type DockRegions = ([(DockSide, Rectangle); 3], [(DockSide, Rectangle); 3]);
 
 const SPLIT_EDGE_FRACTION: f32 = 0.25;
-const TAB_INSERT_MARKER_WIDTH: f32 = 2.0;
+pub const TAB_INSERT_MARKER_WIDTH: f32 = 2.0;
+/// Thin outer window bezel for hidden-dock drops during tab drag.
+const HIDDEN_DOCK_EDGE_THICKNESS: f32 = 6.0;
 
 /// Compute per-pane pixel bounds by walking the pane grid's split tree.
 pub fn compute_pane_bounds(
@@ -303,6 +305,112 @@ pub fn compute_dock_regions(docks: &Docks, window_size: Size) -> DockRegions {
     (rails, bodies)
 }
 
+/// Temporary outer-edge drop zones for hidden docks while a tab drag is active.
+///
+/// Hidden docks stay out of the visible layout until drop; these strips are the
+/// only dock hit targets exposed during drag.
+pub fn compute_hidden_dock_edge_zones(
+    docks: &Docks,
+    window_size: Size,
+) -> [(DockSide, Rectangle); 3] {
+    let inner = workspace_layout_metrics::framed_inner(window_size);
+    let (main_row_height, _) = workspace_layout_metrics::main_row_layout(docks, window_size);
+    let thickness = HIDDEN_DOCK_EDGE_THICKNESS;
+
+    let left = if docks.left.is_hidden() {
+        Rectangle {
+            x: inner.x,
+            y: inner.y,
+            width: thickness.min(inner.width),
+            height: main_row_height,
+        }
+    } else {
+        Rectangle::default()
+    };
+
+    let right = if docks.right.is_hidden() {
+        Rectangle {
+            x: inner.x + inner.width - thickness.min(inner.width),
+            y: inner.y,
+            width: thickness.min(inner.width),
+            height: main_row_height,
+        }
+    } else {
+        Rectangle::default()
+    };
+
+    let bottom = if docks.bottom.is_hidden() {
+        Rectangle {
+            x: inner.x,
+            y: inner.y + inner.height - thickness.min(inner.height),
+            width: inner.width,
+            height: thickness.min(inner.height),
+        }
+    } else {
+        Rectangle::default()
+    };
+
+    [
+        (DockSide::Left, left),
+        (DockSide::Right, right),
+        (DockSide::Bottom, bottom),
+    ]
+}
+
+/// Body rectangle a dock would occupy when opened at its remembered extent.
+///
+/// Used for drag previews while the dock remains hidden.
+fn projected_open_dock_body(side: DockSide, docks: &Docks, window_size: Size) -> Rectangle {
+    let inner = workspace_layout_metrics::framed_inner(window_size);
+    let (main_row_height, _) = workspace_layout_metrics::main_row_layout(docks, window_size);
+
+    let left_extent = dock_horizontal_extent(&docks.left);
+    let right_extent = dock_horizontal_extent(&docks.right);
+
+    let center_x = inner.x
+        + left_extent
+        + if left_extent > 0.0 {
+            MAIN_AXIS_SPACING
+        } else {
+            0.0
+        };
+    let center_width = (inner.width
+        - left_extent
+        - right_extent
+        - if left_extent > 0.0 {
+            MAIN_AXIS_SPACING
+        } else {
+            0.0
+        }
+        - if right_extent > 0.0 {
+            MAIN_AXIS_SPACING
+        } else {
+            0.0
+        })
+    .max(0.0);
+
+    match side {
+        DockSide::Left => Rectangle {
+            x: inner.x,
+            y: inner.y,
+            width: docks.left.extent,
+            height: main_row_height,
+        },
+        DockSide::Right => Rectangle {
+            x: inner.x + inner.width - docks.right.extent,
+            y: inner.y,
+            width: docks.right.extent,
+            height: main_row_height,
+        },
+        DockSide::Bottom => Rectangle {
+            x: center_x,
+            y: inner.y + inner.height - docks.bottom.extent,
+            width: center_width,
+            height: docks.bottom.extent,
+        },
+    }
+}
+
 fn omit_tab_at(location: PanelLocation, drag: Option<&DragState>) -> Option<usize> {
     drag.and_then(|d| (d.source_location == location).then_some(d.source_tab))
 }
@@ -310,13 +418,15 @@ fn omit_tab_at(location: PanelLocation, drag: Option<&DragState>) -> Option<usiz
 /// Hit-test cursor position against all drop zones and resolve a [`DropTarget`].
 pub fn compute_drop_target(
     cursor: Point,
-    grid_bounds: Rectangle,
-    pane_bounds: &[PaneBounds],
-    dock_rails: &[(DockSide, Rectangle)],
-    dock_bodies: &[(DockSide, Rectangle)],
+    geometry: &WindowDropGeometry,
     docks: &Docks,
     drag: Option<&DragState>,
 ) -> DropTarget {
+    let grid_bounds = geometry.grid_bounds;
+    let pane_bounds = &geometry.pane_bounds;
+    let window_size = geometry.window_size;
+    let dock_rails = &geometry.dock_rails;
+    let dock_bodies = &geometry.dock_bodies;
     let strip_h = tab_strip_height();
 
     // 1. Tab strips of center panes.
@@ -375,7 +485,25 @@ pub fn compute_drop_target(
         }
     }
 
-    // 4. Pane edges for split targets (below tab strip only).
+    // 4. Outer window edges for hidden docks (active drag only).
+    if drag.is_some() {
+        for &(side, edge) in &geometry.hidden_dock_edge_zones {
+            if edge.width > 0.0 && edge.height > 0.0 && edge.contains(cursor) {
+                return DropTarget::Dock(side);
+            }
+        }
+    }
+
+    // 5. Pane edges for split targets (below tab strip only).
+    let inner = workspace_layout_metrics::framed_inner(window_size);
+    let (main_row_height, _) = workspace_layout_metrics::main_row_layout(docks, window_size);
+    let grid_bottom = inner.y + main_row_height;
+    let dock_edge = if drag.is_some() {
+        HIDDEN_DOCK_EDGE_THICKNESS
+    } else {
+        0.0
+    };
+
     for pb in pane_bounds {
         if !pb.bounds.contains(cursor) {
             continue;
@@ -387,15 +515,34 @@ pub fn compute_drop_target(
         let rel_x = cursor.x - pb.bounds.x;
         let rel_y = cursor.y - pb.bounds.y;
         let below_strip = rel_y > strip_h;
+        let left_inset = if docks.left.is_hidden() && (pb.bounds.x - inner.x).abs() < 0.5 {
+            dock_edge
+        } else {
+            0.0
+        };
+        let right_inset = if docks.right.is_hidden()
+            && ((pb.bounds.x + pb.bounds.width) - (inner.x + inner.width)).abs() < 0.5
+        {
+            dock_edge
+        } else {
+            0.0
+        };
+        let bottom_inset = if docks.bottom.is_hidden()
+            && ((pb.bounds.y + pb.bounds.height) - grid_bottom).abs() < 0.5
+        {
+            dock_edge
+        } else {
+            0.0
+        };
 
         if below_strip {
-            if rel_x < quarter_w {
+            if rel_x >= left_inset && rel_x < left_inset + quarter_w {
                 return DropTarget::SplitPane(SplitPaneTarget {
                     pane: pb.pane,
                     direction: Direction::Left,
                 });
             }
-            if rel_x > pb.bounds.width - quarter_w {
+            if rel_x > pb.bounds.width - quarter_w - right_inset {
                 return DropTarget::SplitPane(SplitPaneTarget {
                     pane: pb.pane,
                     direction: Direction::Right,
@@ -407,7 +554,7 @@ pub fn compute_drop_target(
                     direction: Direction::Up,
                 });
             }
-            if rel_y > pb.bounds.height - quarter_h {
+            if rel_y > pb.bounds.height - quarter_h - bottom_inset {
                 return DropTarget::SplitPane(SplitPaneTarget {
                     pane: pb.pane,
                     direction: Direction::Down,
@@ -432,7 +579,7 @@ pub fn compute_drop_target(
         });
     }
 
-    // 5. Dock rails — only outside the center grid.
+    // 6. Dock rails — only outside the center grid.
     for &(side, rail) in dock_rails {
         if rail.width > 0.0
             && rail.height > 0.0
@@ -493,6 +640,7 @@ pub fn preview_bounds(
     dock_rails: &[(DockSide, Rectangle)],
     dock_bodies: &[(DockSide, Rectangle)],
     docks: &Docks,
+    window_size: Size,
     drag: Option<&DragState>,
 ) -> Option<Rectangle> {
     match target {
@@ -503,7 +651,9 @@ pub fn preview_bounds(
             .iter()
             .find(|pb| pb.pane == split.pane)
             .map(|pb| split_preview_rect(pb, split.direction)),
-        DropTarget::Dock(side) => dock_preview_bounds(side, dock_rails, dock_bodies),
+        DropTarget::Dock(side) => {
+            dock_preview_bounds(side, dock_rails, dock_bodies, docks, window_size)
+        }
         DropTarget::None => None,
     }
 }
@@ -569,12 +719,14 @@ fn dock_preview_bounds(
     side: DockSide,
     dock_rails: &[(DockSide, Rectangle)],
     dock_bodies: &[(DockSide, Rectangle)],
+    docks: &Docks,
+    window_size: Size,
 ) -> Option<Rectangle> {
     dock_bodies
         .iter()
         .find_map(|&(dock_side, body)| {
             if dock_side == side && body.width > 0.0 && body.height > 0.0 {
-                Some(body)
+                Some(inset_preview_rect(body))
             } else {
                 None
             }
@@ -582,43 +734,59 @@ fn dock_preview_bounds(
         .or_else(|| {
             dock_rails.iter().find_map(|&(dock_side, rail)| {
                 if dock_side == side && rail.width > 0.0 && rail.height > 0.0 {
-                    Some(rail)
+                    Some(inset_preview_rect(rail))
                 } else {
                     None
                 }
             })
         })
+        .or_else(|| {
+            docks
+                .get(side)
+                .is_hidden()
+                .then(|| inset_preview_rect(projected_open_dock_body(side, docks, window_size)))
+        })
+}
+
+/// Shrink preview geometry so it sits inside painted pane/dock borders.
+fn inset_preview_rect(rect: Rectangle) -> Rectangle {
+    let inset = PANE_BORDER_WIDTH + PREVIEW_PAD;
+    Rectangle {
+        x: rect.x + inset,
+        y: rect.y + inset,
+        width: (rect.width - inset * 2.0).max(0.0),
+        height: (rect.height - inset * 2.0).max(0.0),
+    }
+}
+
+fn pane_inner_bounds(pb: &PaneBounds) -> Rectangle {
+    inset_preview_rect(pb.bounds)
 }
 
 fn split_preview_rect(pb: &PaneBounds, direction: Direction) -> Rectangle {
-    let strip_h = tab_strip_height();
-    let body = Rectangle {
-        x: pb.bounds.x,
-        y: pb.bounds.y + strip_h,
-        width: pb.bounds.width,
-        height: (pb.bounds.height - strip_h).max(0.0),
-    };
+    let pane = pane_inner_bounds(pb);
+    let half_gap = PANE_GRID_SPACING / 2.0;
 
     match direction {
         Direction::Left => Rectangle {
-            width: body.width / 2.0,
-            ..body
+            width: (pane.width / 2.0 - half_gap).max(0.0),
+            ..pane
         },
         Direction::Right => Rectangle {
-            x: body.x + body.width / 2.0,
-            width: body.width / 2.0,
-            y: body.y,
-            height: body.height,
+            x: pane.x + pane.width / 2.0 + half_gap,
+            width: (pane.width / 2.0 - half_gap).max(0.0),
+            y: pane.y,
+            height: pane.height,
         },
         Direction::Up => Rectangle {
-            height: body.height / 2.0,
-            ..body
+            height: (pane.height / 2.0 - half_gap).max(0.0),
+            ..pane
         },
         Direction::Down => Rectangle {
-            x: body.x,
-            y: body.y + body.height / 2.0,
-            width: body.width,
-            height: body.height / 2.0,
+            x: pane.x,
+            y: pane.y + pane.height / 2.0 + half_gap,
+            width: pane.width,
+            height: (pane.height / 2.0 - half_gap).max(0.0),
         },
     }
 }
@@ -635,6 +803,7 @@ pub struct WindowDropGeometry {
     pub pane_bounds: Vec<PaneBounds>,
     pub dock_rails: Vec<(DockSide, Rectangle)>,
     pub dock_bodies: Vec<(DockSide, Rectangle)>,
+    pub hidden_dock_edge_zones: [(DockSide, Rectangle); 3],
 }
 
 /// Resolve a drop target within a single window's precomputed geometry.
@@ -644,15 +813,7 @@ pub fn resolve_drop_target_in_geometry(
     docks: &Docks,
     drag: Option<&DragState>,
 ) -> DropTarget {
-    compute_drop_target(
-        cursor,
-        geometry.grid_bounds,
-        &geometry.pane_bounds,
-        &geometry.dock_rails,
-        &geometry.dock_bodies,
-        docks,
-        drag,
-    )
+    compute_drop_target(cursor, geometry, docks, drag)
 }
 
 /// Pick the window under `cursor` and resolve its drop target.
@@ -698,6 +859,24 @@ mod tests {
         }
     }
 
+    fn drag_geometry_bundle(
+        panes: &pane_grid::State<PaneState>,
+        docks: &Docks,
+        window_size: Size,
+    ) -> WindowDropGeometry {
+        let grid = compute_grid_bounds(docks, window_size);
+        let pane_bounds = compute_pane_bounds(panes, grid);
+        let (rails, bodies) = compute_dock_regions(docks, window_size);
+        WindowDropGeometry {
+            window_size,
+            grid_bounds: grid,
+            pane_bounds,
+            dock_rails: rails.to_vec(),
+            dock_bodies: bodies.to_vec(),
+            hidden_dock_edge_zones: compute_hidden_dock_edge_zones(docks, window_size),
+        }
+    }
+
     #[test]
     fn single_pane_computes_one_bounds_entry() {
         let (panes, _first) = single_pane_grid();
@@ -724,20 +903,10 @@ mod tests {
     fn drop_target_none_outside_all_regions() {
         let (panes, _first) = single_pane_grid();
         let window = Size::new(1024.0, 768.0);
-        let grid = compute_grid_bounds(&Docks::empty(), window);
-        let pane_bounds = compute_pane_bounds(&panes, grid);
         let docks = Docks::empty();
-        let (rails, bodies) = compute_dock_regions(&docks, window);
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
 
-        let target = compute_drop_target(
-            Point::new(400.0, 10.0),
-            grid,
-            &pane_bounds,
-            &rails,
-            &bodies,
-            &docks,
-            None,
-        );
+        let target = compute_drop_target(Point::new(400.0, 10.0), &geometry, &docks, None);
         assert_eq!(target, DropTarget::None);
     }
 
@@ -745,19 +914,15 @@ mod tests {
     fn drop_target_tab_strip_center_of_pane() {
         let (panes, first) = single_pane_grid();
         let window = Size::new(1024.0, 768.0);
-        let grid = compute_grid_bounds(&Docks::empty(), window);
-        let pane_bounds = compute_pane_bounds(&panes, grid);
         let docks = Docks::empty();
-        let (rails, bodies) = compute_dock_regions(&docks, window);
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
+        let grid = geometry.grid_bounds;
 
         let strip_h = tab_strip_height();
         let body_mid_y = grid.y + strip_h + (grid.height - strip_h) / 2.0;
         let target = compute_drop_target(
             Point::new(grid.x + grid.width / 2.0, body_mid_y),
-            grid,
-            &pane_bounds,
-            &rails,
-            &bodies,
+            &geometry,
             &docks,
             None,
         );
@@ -774,18 +939,13 @@ mod tests {
     fn drop_target_split_left_edge() {
         let (panes, first) = single_pane_grid();
         let window = Size::new(1024.0, 768.0);
-        let grid = compute_grid_bounds(&Docks::empty(), window);
-        let pane_bounds = compute_pane_bounds(&panes, grid);
         let docks = Docks::empty();
-        let (rails, bodies) = compute_dock_regions(&docks, window);
-        let pb = &pane_bounds[0];
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
+        let pb = &geometry.pane_bounds[0];
 
         let target = compute_drop_target(
             Point::new(pb.bounds.x + 10.0, pb.bounds.y + tab_strip_height() + 40.0),
-            grid,
-            &pane_bounds,
-            &rails,
-            &bodies,
+            &geometry,
             &docks,
             None,
         );
@@ -814,11 +974,10 @@ mod tests {
         );
 
         let window = Size::new(1100.0, 760.0);
-        let grid = compute_grid_bounds(&docks, window);
-        let pane_bounds = compute_pane_bounds(&panes, grid);
-        let (rails, bodies) = compute_dock_regions(&docks, window);
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
 
-        let pb = pane_bounds
+        let pb = geometry
+            .pane_bounds
             .iter()
             .find(|pb| pb.pane == second)
             .expect("second pane bounds");
@@ -827,7 +986,7 @@ mod tests {
             pb.tab_strip.y + pb.tab_strip.height / 2.0,
         );
 
-        let target = compute_drop_target(cursor, grid, &pane_bounds, &rails, &bodies, &docks, None);
+        let target = compute_drop_target(cursor, &geometry, &docks, None);
         assert!(
             matches!(target, DropTarget::TabStrip(_)),
             "expected tab strip, got {target:?}"
@@ -840,11 +999,26 @@ mod tests {
         let pane_bounds = compute_pane_bounds(&panes, grid_bounds_800x500());
         let pb = &pane_bounds[0];
         let preview = split_preview_rect(pb, Direction::Right);
-        let body_h = pb.bounds.height - tab_strip_height();
-        assert!((preview.width - pb.bounds.width / 2.0).abs() < 0.5);
-        assert!((preview.height - body_h).abs() < 0.5);
-        assert!((preview.x - (pb.bounds.x + pb.bounds.width / 2.0)).abs() < 0.5);
+        let pane = pane_inner_bounds(pb);
+        let half_gap = PANE_GRID_SPACING / 2.0;
+        assert!((preview.width - (pane.width / 2.0 - half_gap)).abs() < 0.5);
+        assert!((preview.height - pane.height).abs() < 0.5);
+        assert!((preview.x - (pane.x + pane.width / 2.0 + half_gap)).abs() < 0.5);
         let _ = first;
+    }
+
+    #[test]
+    fn split_preview_sits_inside_pane_border() {
+        let (panes, _first) = single_pane_grid();
+        let pane_bounds = compute_pane_bounds(&panes, grid_bounds_800x500());
+        let pb = &pane_bounds[0];
+        let preview = split_preview_rect(pb, Direction::Left);
+        let inset = PANE_BORDER_WIDTH + PREVIEW_PAD;
+
+        assert!(preview.x >= pb.bounds.x + inset);
+        assert!(preview.y >= pb.bounds.y + inset);
+        assert!(preview.x + preview.width <= pb.bounds.x + pb.bounds.width - inset);
+        assert!(preview.y + preview.height <= pb.bounds.y + pb.bounds.height - inset);
     }
 
     #[test]
@@ -903,6 +1077,7 @@ mod tests {
                 pane_bounds,
                 dock_rails: rails.to_vec(),
                 dock_bodies: bodies.to_vec(),
+                hidden_dock_edge_zones: compute_hidden_dock_edge_zones(&docks, window_size),
             },
         )
     }
@@ -929,6 +1104,7 @@ mod tests {
                 pane_bounds,
                 dock_rails: rails.to_vec(),
                 dock_bodies: bodies.to_vec(),
+                hidden_dock_edge_zones: compute_hidden_dock_edge_zones(&docks, window_size),
             },
         )
     }
@@ -1033,5 +1209,169 @@ mod tests {
         let dragging_second = tab_insert_marker_x(strip, 2, 2, Some(1));
         let after_first = tab_insert_marker_x(strip, 2, 1, None);
         assert_eq!(dragging_second, after_first);
+    }
+
+    fn drag_state_for(location: PanelLocation, tab: usize) -> DragState {
+        DragState::new(location, tab)
+    }
+
+    #[test]
+    fn hidden_dock_edge_zone_targets_right_dock_during_drag() {
+        let (panes, _first) = single_pane_grid();
+        let window = Size::new(1024.0, 768.0);
+        let docks = Docks::empty();
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
+        let inner = workspace_layout_metrics::framed_inner(window);
+        let drag = drag_state_for(PanelLocation::Center(geometry.pane_bounds[0].pane), 0);
+
+        let cursor = Point::new(
+            inner.x + inner.width - HIDDEN_DOCK_EDGE_THICKNESS / 2.0,
+            inner.y + inner.height / 2.0,
+        );
+        let target = compute_drop_target(cursor, &geometry, &docks, Some(&drag));
+
+        assert_eq!(target, DropTarget::Dock(DockSide::Right));
+        assert!(docks.right.is_hidden());
+    }
+
+    #[test]
+    fn hidden_dock_edge_zone_targets_bottom_dock_during_drag() {
+        let (panes, _first) = single_pane_grid();
+        let window = Size::new(1024.0, 768.0);
+        let docks = Docks::empty();
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
+        let inner = workspace_layout_metrics::framed_inner(window);
+        let drag = drag_state_for(PanelLocation::Center(geometry.pane_bounds[0].pane), 0);
+
+        let cursor = Point::new(
+            inner.x + inner.width / 2.0,
+            inner.y + inner.height - HIDDEN_DOCK_EDGE_THICKNESS / 2.0,
+        );
+        let target = compute_drop_target(cursor, &geometry, &docks, Some(&drag));
+
+        assert_eq!(target, DropTarget::Dock(DockSide::Bottom));
+        assert!(docks.bottom.is_hidden());
+    }
+
+    #[test]
+    fn hidden_dock_edge_zone_targets_left_dock_during_drag() {
+        let (panes, _first) = single_pane_grid();
+        let window = Size::new(1024.0, 768.0);
+        let docks = Docks::empty();
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
+        let inner = workspace_layout_metrics::framed_inner(window);
+        let drag = drag_state_for(PanelLocation::Center(geometry.pane_bounds[0].pane), 0);
+
+        let cursor = Point::new(
+            inner.x + HIDDEN_DOCK_EDGE_THICKNESS / 2.0,
+            inner.y + inner.height / 2.0,
+        );
+        let target = compute_drop_target(cursor, &geometry, &docks, Some(&drag));
+
+        assert_eq!(target, DropTarget::Dock(DockSide::Left));
+        assert!(docks.left.is_hidden());
+    }
+
+    #[test]
+    fn hidden_dock_edge_zones_are_inactive_without_drag() {
+        let (panes, first) = single_pane_grid();
+        let window = Size::new(1024.0, 768.0);
+        let docks = Docks::empty();
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
+        let inner = workspace_layout_metrics::framed_inner(window);
+
+        let cursor = Point::new(
+            inner.x + HIDDEN_DOCK_EDGE_THICKNESS / 2.0,
+            inner.y + inner.height / 2.0,
+        );
+        let target = compute_drop_target(cursor, &geometry, &docks, None);
+
+        assert_eq!(
+            target,
+            DropTarget::SplitPane(SplitPaneTarget {
+                pane: first,
+                direction: Direction::Left,
+            })
+        );
+    }
+
+    #[test]
+    fn outer_edge_dock_priority_over_pane_split_during_drag() {
+        let (panes, first) = single_pane_grid();
+        let window = Size::new(1024.0, 768.0);
+        let docks = Docks::empty();
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
+        let pb = &geometry.pane_bounds[0];
+        let drag = drag_state_for(PanelLocation::Center(first), 0);
+
+        let cursor = Point::new(
+            pb.bounds.x + pb.bounds.width * 0.05,
+            pb.bounds.y + tab_strip_height() + 40.0,
+        );
+        let without_drag = compute_drop_target(cursor, &geometry, &docks, None);
+        assert_eq!(
+            without_drag,
+            DropTarget::SplitPane(SplitPaneTarget {
+                pane: first,
+                direction: Direction::Left,
+            })
+        );
+
+        let inner = workspace_layout_metrics::framed_inner(window);
+        let dock_cursor = Point::new(
+            inner.x + HIDDEN_DOCK_EDGE_THICKNESS / 2.0,
+            pb.bounds.y + tab_strip_height() + 40.0,
+        );
+        let with_drag = compute_drop_target(dock_cursor, &geometry, &docks, Some(&drag));
+        assert_eq!(with_drag, DropTarget::Dock(DockSide::Left));
+    }
+
+    #[test]
+    fn pane_split_wins_inward_from_hidden_dock_bezel() {
+        let (panes, first) = single_pane_grid();
+        let window = Size::new(1024.0, 768.0);
+        let docks = Docks::empty();
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
+        let pb = &geometry.pane_bounds[0];
+        let drag = drag_state_for(PanelLocation::Center(first), 0);
+
+        let dock_cursor = Point::new(
+            pb.bounds.x + HIDDEN_DOCK_EDGE_THICKNESS / 2.0,
+            pb.bounds.y + tab_strip_height() + 40.0,
+        );
+        assert_eq!(
+            compute_drop_target(dock_cursor, &geometry, &docks, Some(&drag)),
+            DropTarget::Dock(DockSide::Left)
+        );
+
+        let split_cursor = Point::new(
+            pb.bounds.x + HIDDEN_DOCK_EDGE_THICKNESS + 12.0,
+            pb.bounds.y + tab_strip_height() + 40.0,
+        );
+        assert_eq!(
+            compute_drop_target(split_cursor, &geometry, &docks, Some(&drag)),
+            DropTarget::SplitPane(SplitPaneTarget {
+                pane: first,
+                direction: Direction::Left,
+            })
+        );
+    }
+
+    #[test]
+    fn hidden_dock_preview_uses_remembered_extent() {
+        let mut docks = Docks::empty();
+        let window = Size::new(1024.0, 768.0);
+        let (rails, bodies) = compute_dock_regions(&docks, window);
+        let custom_extent = 320.0;
+        docks.left.extent = custom_extent;
+
+        let preview = dock_preview_bounds(DockSide::Left, &rails, &bodies, &docks, window)
+            .expect("hidden dock preview");
+
+        assert!(
+            (preview.width - (custom_extent - (PANE_BORDER_WIDTH + PREVIEW_PAD) * 2.0)).abs() < 0.5
+        );
+        let inner = workspace_layout_metrics::framed_inner(window);
+        assert!((preview.x - (inner.x + PANE_BORDER_WIDTH + PREVIEW_PAD)).abs() < 0.5);
     }
 }

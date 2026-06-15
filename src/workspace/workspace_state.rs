@@ -22,7 +22,7 @@ use crate::workspace::workspace_command_palette::{CommandId, CommandItem, Palett
 use crate::workspace::workspace_dock::{DockVisibility, Docks};
 use crate::workspace::workspace_drag::{
     Direction, DockRegions, DragState, DropTarget, PaneBounds, SplitPaneTarget, TabStripTarget,
-    WindowDropGeometry, resolve_drop_target_in_geometry,
+    WindowDropGeometry, compute_hidden_dock_edge_zones, resolve_drop_target_in_geometry,
 };
 use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_message::WorkspaceMessage;
@@ -257,17 +257,100 @@ impl Workspace {
         let Some(factory) = self.scratch_factory else {
             return;
         };
-        let empty_panes: Vec<_> = self
+
+        if self.workbench_has_tabs() {
+            let empty_panes: Vec<_> = self
+                .panes
+                .iter()
+                .filter(|(_, ps)| ps.is_empty())
+                .map(|(pane, _)| *pane)
+                .collect();
+            for pane in empty_panes {
+                if self.panes.len() > 1 {
+                    let closing_focused = self.focused == PanelLocation::Center(pane);
+                    if let Some((_, sibling)) = self.panes.close(pane)
+                        && closing_focused
+                    {
+                        self.focused = PanelLocation::Center(sibling);
+                    }
+                }
+            }
+        }
+
+        if self.workbench_has_tabs() {
+            return;
+        }
+
+        while self.panes.len() > 1 {
+            let pane = self
+                .panes
+                .iter()
+                .find(|(_, ps)| ps.is_empty())
+                .map(|(pane, _)| *pane)
+                .unwrap_or_else(|| *self.panes.iter().next().unwrap().0);
+            let closing_focused = self.focused == PanelLocation::Center(pane);
+            if let Some((_, sibling)) = self.panes.close(pane)
+                && closing_focused
+            {
+                self.focused = PanelLocation::Center(sibling);
+            } else if self.panes.get(pane).is_some() {
+                break;
+            }
+        }
+
+        let target_pane = self
             .panes
             .iter()
-            .filter(|(_, ps)| ps.is_empty())
+            .find(|(_, ps)| ps.is_empty())
             .map(|(pane, _)| *pane)
-            .collect();
-        for pane in empty_panes {
-            if let Some(ps) = self.panes.get_mut(pane) {
-                ps.tabs.push(factory());
-                ps.active = 0;
-                self.focused = PanelLocation::Center(pane);
+            .or_else(|| self.panes.iter().next().map(|(pane, _)| *pane));
+
+        if let Some(pane) = target_pane
+            && let Some(ps) = self.panes.get_mut(pane)
+            && ps.is_empty()
+        {
+            ps.tabs.push(factory());
+            ps.active = 0;
+            self.focused = PanelLocation::Center(pane);
+        }
+    }
+
+    fn workbench_has_tabs(&self) -> bool {
+        self.panes.iter().any(|(_, ps)| !ps.is_empty())
+    }
+
+    fn workbench_has_other_tabs_than(&self, pane: pane_grid::Pane) -> bool {
+        self.panes
+            .iter()
+            .any(|(candidate, ps)| *candidate != pane && !ps.is_empty())
+    }
+
+    /// After a center pane loses its last tab, close it when siblings still
+    /// hold content; otherwise keep the workbench alive with scratch.
+    fn reconcile_empty_center_pane(&mut self, pane: pane_grid::Pane) {
+        if self.panes.len() > 1 && self.workbench_has_other_tabs_than(pane) {
+            let closing_focused = self.focused == PanelLocation::Center(pane);
+            if let Some((_, sibling)) = self.panes.close(pane)
+                && closing_focused
+            {
+                self.focused = PanelLocation::Center(sibling);
+            }
+            return;
+        }
+
+        if let Some(factory) = self.scratch_factory
+            && let Some(ps) = self.panes.get_mut(pane)
+            && ps.is_empty()
+        {
+            ps.tabs.push(factory());
+            ps.active = 0;
+            self.focused = PanelLocation::Center(pane);
+        } else if self.panes.len() > 1 {
+            let closing_focused = self.focused == PanelLocation::Center(pane);
+            if let Some((_, sibling)) = self.panes.close(pane)
+                && closing_focused
+            {
+                self.focused = PanelLocation::Center(sibling);
             }
         }
     }
@@ -297,6 +380,7 @@ impl Workspace {
             pane_bounds,
             dock_rails: rails.to_vec(),
             dock_bodies: bodies.to_vec(),
+            hidden_dock_edge_zones: compute_hidden_dock_edge_zones(&self.docks, self.window_size),
         }
     }
 
@@ -368,8 +452,12 @@ impl Workspace {
         self.restore_tab_at_source(source, tab_idx, panel);
     }
 
-    pub(crate) fn cleanup_after_drag_source(&mut self, location: PanelLocation) {
-        self.cleanup_empty_source(location);
+    pub(crate) fn cleanup_after_drag_source(
+        &mut self,
+        location: PanelLocation,
+        drop_target: DropTarget,
+    ) {
+        self.cleanup_empty_source(location, drop_target);
     }
 
     /// Finish a local tab drag, including tear-off to a new window.
@@ -501,13 +589,10 @@ impl Workspace {
             }
             WorkspaceMessage::CursorMoved(cursor) => {
                 if let Some(drag) = self.drag_state.as_ref() {
-                    let (grid, pane_bounds, (rails, bodies)) = self.drag_geometry();
+                    let geometry = self.drop_geometry();
                     let target = crate::workspace::workspace_drag::compute_drop_target(
                         cursor,
-                        grid,
-                        &pane_bounds,
-                        &rails,
-                        &bodies,
+                        &geometry,
                         &self.docks,
                         Some(drag),
                     );
@@ -603,7 +688,7 @@ impl Workspace {
             return;
         }
 
-        self.cleanup_empty_source(source);
+        self.cleanup_empty_source(source, drag.target);
     }
 
     /// Place the dragged panel at the resolved target. Returns `Some(panel)`
@@ -687,7 +772,7 @@ impl Workspace {
 
     /// Remove an empty center pane or collapse an empty dock after a
     /// tab was dragged away.
-    fn cleanup_empty_source(&mut self, location: PanelLocation) {
+    fn cleanup_empty_source(&mut self, location: PanelLocation, drop_target: DropTarget) {
         let is_empty = self
             .pane_state(location)
             .map(|ps| ps.is_empty())
@@ -699,17 +784,11 @@ impl Workspace {
 
         match location {
             PanelLocation::Center(pane) => {
-                if let Some(factory) = self.scratch_factory
-                    && let Some(ps) = self.panes.get_mut(pane)
-                {
-                    ps.tabs.push(factory());
-                    ps.active = 0;
-                    self.focused = PanelLocation::Center(pane);
+                if matches!(drop_target, DropTarget::SplitPane(_)) {
+                    self.fill_empty_center_with_scratch(pane);
                     return;
                 }
-                if let Some((_, sibling)) = self.panes.close(pane) {
-                    self.focused = PanelLocation::Center(sibling);
-                }
+                self.reconcile_empty_center_pane(pane);
             }
             PanelLocation::Dock(side) => {
                 let was_focused = self.focused == PanelLocation::Dock(side);
@@ -718,6 +797,18 @@ impl Workspace {
                     self.return_focus_to_workbench();
                 }
             }
+        }
+    }
+
+    fn fill_empty_center_with_scratch(&mut self, pane: pane_grid::Pane) {
+        let Some(factory) = self.scratch_factory else {
+            return;
+        };
+        if let Some(ps) = self.panes.get_mut(pane)
+            && ps.is_empty()
+        {
+            ps.tabs.push(factory());
+            ps.active = 0;
         }
     }
 
@@ -1022,17 +1113,7 @@ impl Workspace {
 
         match location {
             PanelLocation::Center(pane) => {
-                if let Some(factory) = self.scratch_factory
-                    && let Some(ps) = self.panes.get_mut(pane)
-                {
-                    ps.tabs.push(factory());
-                    ps.active = 0;
-                    self.focused = PanelLocation::Center(pane);
-                    return;
-                }
-                if let Some((_, sibling)) = self.panes.close(pane) {
-                    self.focused = PanelLocation::Center(sibling);
-                }
+                self.reconcile_empty_center_pane(pane);
             }
             PanelLocation::Dock(side) => {
                 let was_focused = self.focused == PanelLocation::Dock(side);
@@ -1743,6 +1824,112 @@ mod tests {
             panic!("expected center");
         };
         assert_eq!(workspace.panes.get(pane).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn hidden_dock_stays_hidden_during_drag_and_opens_on_drop() {
+        use crate::workspace::workspace_layout_metrics;
+
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+        assert!(workspace.docks.left.is_hidden());
+
+        let inner = workspace_layout_metrics::framed_inner(workspace.window_size);
+        workspace.update(
+            WorkspaceMessage::CursorMoved(iced::Point::new(
+                inner.x + 3.0,
+                inner.y + inner.height / 2.0,
+            )),
+            &mut stores,
+        );
+
+        assert!(workspace.docks.left.is_hidden());
+        assert_eq!(
+            workspace.drag_state.as_ref().unwrap().target,
+            DropTarget::Dock(DockSide::Left)
+        );
+
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        assert!(workspace.docks.left.is_open());
+        assert_eq!(workspace.docks.left.tabs.len(), 1);
+    }
+
+    #[test]
+    fn drag_split_last_tab_preserves_two_pane_layout() {
+        use crate::features::ScratchPanel;
+
+        let mut stores = AppStores::new();
+        let mut workspace = Workspace::single_pane(
+            PaneState::new(vec![Box::new(ScratchPanel::new())]),
+            ThemeMode::Dark,
+        );
+        workspace.set_scratch_factory(|| Box::new(ScratchPanel::new()));
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+
+        let pane = match location {
+            PanelLocation::Center(p) => p,
+            _ => panic!(),
+        };
+        workspace.drag_state.as_mut().unwrap().target = DropTarget::SplitPane(SplitPaneTarget {
+            pane,
+            direction: Direction::Right,
+        });
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        assert_eq!(workspace.panes.len(), 2);
+    }
+
+    #[test]
+    fn drag_last_tab_to_dock_closes_empty_center_pane_when_splits_remain() {
+        let (mut workspace, mut stores) = three_tab_workspace();
+        let location = only_center_location(&workspace);
+        let pane = match location {
+            PanelLocation::Center(p) => p,
+            _ => panic!(),
+        };
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted { location, tab: 0 },
+            &mut stores,
+        );
+        workspace.drag_state.as_mut().unwrap().target = DropTarget::SplitPane(SplitPaneTarget {
+            pane,
+            direction: Direction::Right,
+        });
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+        assert_eq!(workspace.panes.len(), 2);
+
+        let source_pane = workspace
+            .panes
+            .iter()
+            .find(|(_, ps)| ps.len() == 1)
+            .map(|(pane, _)| *pane)
+            .expect("pane with one tab");
+        let source = PanelLocation::Center(source_pane);
+
+        workspace.update(
+            WorkspaceMessage::TabDragStarted {
+                location: source,
+                tab: 0,
+            },
+            &mut stores,
+        );
+        workspace.drag_state.as_mut().unwrap().target = DropTarget::Dock(DockSide::Right);
+        workspace.update(WorkspaceMessage::TabDragDropped, &mut stores);
+
+        assert_eq!(workspace.panes.len(), 1);
+        assert!(workspace.docks.right.is_open());
     }
 
     #[test]

@@ -417,7 +417,7 @@ impl OpenZone {
             if let (Some(workspace), Some(panel)) = (self.workspaces.get_mut(&source), failed) {
                 workspace.restore_dragged_panel(source_location, source_tab, panel);
             } else if let Some(workspace) = self.workspaces.get_mut(&source) {
-                workspace.cleanup_after_drag_source(source_location);
+                workspace.cleanup_after_drag_source(source_location, target);
             }
 
             return Task::none();
