@@ -93,8 +93,8 @@ pub type DockRegions = ([(DockSide, Rectangle); 3], [(DockSide, Rectangle); 3]);
 
 const SPLIT_EDGE_FRACTION: f32 = 0.25;
 const TAB_INSERT_MARKER_WIDTH: f32 = 2.0;
-/// Thin outer-edge hit target for hidden docks during an active tab drag.
-const HIDDEN_DOCK_EDGE_THICKNESS: f32 = DOCK_RAIL_THICKNESS;
+/// Thin outer window bezel for hidden-dock drops during tab drag.
+const HIDDEN_DOCK_EDGE_THICKNESS: f32 = 6.0;
 
 /// Compute per-pane pixel bounds by walking the pane grid's split tree.
 pub fn compute_pane_bounds(
@@ -495,6 +495,15 @@ pub fn compute_drop_target(
     }
 
     // 5. Pane edges for split targets (below tab strip only).
+    let inner = workspace_layout_metrics::framed_inner(window_size);
+    let (main_row_height, _) = workspace_layout_metrics::main_row_layout(docks, window_size);
+    let grid_bottom = inner.y + main_row_height;
+    let dock_edge = if drag.is_some() {
+        HIDDEN_DOCK_EDGE_THICKNESS
+    } else {
+        0.0
+    };
+
     for pb in pane_bounds {
         if !pb.bounds.contains(cursor) {
             continue;
@@ -506,15 +515,34 @@ pub fn compute_drop_target(
         let rel_x = cursor.x - pb.bounds.x;
         let rel_y = cursor.y - pb.bounds.y;
         let below_strip = rel_y > strip_h;
+        let left_inset = if docks.left.is_hidden() && (pb.bounds.x - inner.x).abs() < 0.5 {
+            dock_edge
+        } else {
+            0.0
+        };
+        let right_inset = if docks.right.is_hidden()
+            && ((pb.bounds.x + pb.bounds.width) - (inner.x + inner.width)).abs() < 0.5
+        {
+            dock_edge
+        } else {
+            0.0
+        };
+        let bottom_inset = if docks.bottom.is_hidden()
+            && ((pb.bounds.y + pb.bounds.height) - grid_bottom).abs() < 0.5
+        {
+            dock_edge
+        } else {
+            0.0
+        };
 
         if below_strip {
-            if rel_x < quarter_w {
+            if rel_x >= left_inset && rel_x < left_inset + quarter_w {
                 return DropTarget::SplitPane(SplitPaneTarget {
                     pane: pb.pane,
                     direction: Direction::Left,
                 });
             }
-            if rel_x > pb.bounds.width - quarter_w {
+            if rel_x > pb.bounds.width - quarter_w - right_inset {
                 return DropTarget::SplitPane(SplitPaneTarget {
                     pane: pb.pane,
                     direction: Direction::Right,
@@ -526,7 +554,7 @@ pub fn compute_drop_target(
                     direction: Direction::Up,
                 });
             }
-            if rel_y > pb.bounds.height - quarter_h {
+            if rel_y > pb.bounds.height - quarter_h - bottom_inset {
                 return DropTarget::SplitPane(SplitPaneTarget {
                     pane: pb.pane,
                     direction: Direction::Down,
@@ -1229,6 +1257,37 @@ mod tests {
         );
         let with_drag = compute_drop_target(dock_cursor, &geometry, &docks, Some(&drag));
         assert_eq!(with_drag, DropTarget::Dock(DockSide::Left));
+    }
+
+    #[test]
+    fn pane_split_wins_inward_from_hidden_dock_bezel() {
+        let (panes, first) = single_pane_grid();
+        let window = Size::new(1024.0, 768.0);
+        let docks = Docks::empty();
+        let geometry = drag_geometry_bundle(&panes, &docks, window);
+        let pb = &geometry.pane_bounds[0];
+        let drag = drag_state_for(PanelLocation::Center(first), 0);
+
+        let dock_cursor = Point::new(
+            pb.bounds.x + HIDDEN_DOCK_EDGE_THICKNESS / 2.0,
+            pb.bounds.y + tab_strip_height() + 40.0,
+        );
+        assert_eq!(
+            compute_drop_target(dock_cursor, &geometry, &docks, Some(&drag)),
+            DropTarget::Dock(DockSide::Left)
+        );
+
+        let split_cursor = Point::new(
+            pb.bounds.x + HIDDEN_DOCK_EDGE_THICKNESS + 12.0,
+            pb.bounds.y + tab_strip_height() + 40.0,
+        );
+        assert_eq!(
+            compute_drop_target(split_cursor, &geometry, &docks, Some(&drag)),
+            DropTarget::SplitPane(SplitPaneTarget {
+                pane: first,
+                direction: Direction::Left,
+            })
+        );
     }
 
     #[test]
