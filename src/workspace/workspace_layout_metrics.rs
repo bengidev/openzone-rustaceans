@@ -12,12 +12,15 @@ pub const SIDE_DOCK_WIDTH: f32 = 280.0;
 pub const BOTTOM_DOCK_HEIGHT: f32 = 200.0;
 pub const DOCK_RAIL_THICKNESS: f32 = 28.0;
 
-/// Matches [`SpacingToken::Hairline`].
-pub const FRAMED_PADDING: f32 = 2.0;
-/// Matches [`SpacingToken::Hairline`].
-pub const MAIN_AXIS_SPACING: f32 = 2.0;
-/// Matches [`SpacingToken::S2`].
-pub const PANE_GRID_SPACING: f32 = 8.0;
+/// Shared 1px gutter for pane splits, dock seams, and framed spacing.
+pub const SHELL_GUTTER: f32 = 1.0;
+/// Inset between the framed body and the title/status bars. Zero for a
+/// flush workbench shell with no outer inset.
+pub const FRAMED_PADDING: f32 = 0.0;
+/// Seam between docks and the center workbench.
+pub const MAIN_AXIS_SPACING: f32 = SHELL_GUTTER;
+/// Seam between split workbench panes.
+pub const PANE_GRID_SPACING: f32 = SHELL_GUTTER;
 
 const BAR_BORDER: f32 = 1.0;
 
@@ -39,7 +42,7 @@ pub fn status_bar_height() -> f32 {
 
 /// Height of a pane or dock tab strip (container + chip + label).
 pub fn tab_strip_height() -> f32 {
-    SpacingToken::S1.value() * 4.0 + type_line_height(TypeRole::LabelMd) + BAR_BORDER
+    SpacingToken::S1.value() * 2.0 + type_line_height(TypeRole::LabelMd) + BAR_BORDER
 }
 
 /// Estimated width of a single tab chip for ghost rendering.

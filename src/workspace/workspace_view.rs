@@ -56,17 +56,17 @@ pub fn view<'a>(workspace: &'a Workspace, stores: &'a AppStores) -> Element<'a, 
     ]
     .width(Length::Fill)
     .height(Length::Fill)
-    .spacing(SpacingToken::Hairline.value());
+    .spacing(layout_metrics::SHELL_GUTTER);
 
     let body = column![main_row, dock_bottom(workspace, stores, theme)]
         .width(Length::Fill)
         .height(Length::Fill)
-        .spacing(SpacingToken::Hairline.value());
+        .spacing(layout_metrics::SHELL_GUTTER);
 
     let framed = container(body)
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(SpacingToken::Hairline.value())
+        .padding(layout_metrics::FRAMED_PADDING)
         .style(move |_| surface_style(theme, BackgroundToken::Primary));
 
     let shell = column![title_bar(theme), framed, status_bar(theme, workspace)]
@@ -158,7 +158,7 @@ fn center_pane_grid<'a>(
         })
         .width(Length::Fill)
         .height(Length::Fill)
-        .spacing(SpacingToken::S2.value())
+        .spacing(layout_metrics::PANE_GRID_SPACING)
         .on_click(WorkspaceMessage::PaneClicked)
         .on_drag(WorkspaceMessage::PaneDragged);
 
@@ -652,7 +652,7 @@ fn tab_chip<'a>(
     let chip_body = container(chip_inner)
         .padding([
             SpacingToken::S1.value() as u16,
-            SpacingToken::S3.value() as u16,
+            SpacingToken::S2.value() as u16,
         ])
         .style(move |_| tab_chip_style(theme, active));
 
@@ -752,7 +752,7 @@ fn pane_frame_style(theme: OpenZoneTheme, focused: bool) -> container::Style {
         border: Border {
             color: shell_chrome::pane_border_color(theme, focused),
             width: shell_chrome::pane_border_width(focused),
-            radius: RadiusToken::Xs.value().into(),
+            radius: 0.0.into(),
         },
         ..container::Style::default()
     }

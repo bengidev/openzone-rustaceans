@@ -24,13 +24,13 @@ pub fn pane_border_color(theme: OpenZoneTheme, focused: bool) -> Color {
     }
 }
 
-/// Border width for a focused vs unfocused pane or dock body.
-pub fn pane_border_width(focused: bool) -> f32 {
-    if focused { 2.0 } else { 1.0 }
+/// Border width for pane and dock body outlines.
+pub fn pane_border_width(_focused: bool) -> f32 {
+    1.0
 }
 
 /// Active tab underline thickness.
-pub const ACTIVE_TAB_UNDERLINE: f32 = 2.0;
+pub const ACTIVE_TAB_UNDERLINE: f32 = 1.0;
 
 /// Command palette card width.
 pub const PALETTE_MAX_WIDTH: f32 = 440.0;
@@ -190,7 +190,7 @@ pub fn dock_control_color(theme: OpenZoneTheme, visibility: DockVisibility) -> C
 /// Whether focused pane/dock chrome uses accent borders per the shell contract.
 pub fn focused_pane_uses_accent_border(theme: OpenZoneTheme) -> bool {
     pane_border_color(theme, true) == theme.foreground(ForegroundToken::Accent)
-        && pane_border_width(true) == 2.0
+        && pane_border_width(true) == 1.0
 }
 
 #[cfg(test)]
@@ -221,7 +221,7 @@ mod tests {
         let accent = theme().foreground(ForegroundToken::Accent);
         assert_eq!(pane_border_color(theme(), true), accent);
         assert_ne!(pane_border_color(theme(), false), accent);
-        assert_eq!(pane_border_width(true), 2.0);
+        assert_eq!(pane_border_width(true), 1.0);
     }
 
     #[test]
