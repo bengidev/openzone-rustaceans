@@ -118,6 +118,7 @@ pub struct ShellSmokeSnapshot {
     pub close_confirmation_open: bool,
     pub focused_uses_accent_border: bool,
     pub drop_preview_uses_fill: bool,
+    pub output_dock_badged: bool,
 }
 
 pub fn shell_smoke_snapshot(workspace: &Workspace) -> ShellSmokeSnapshot {
@@ -156,6 +157,7 @@ pub fn shell_smoke_snapshot(workspace: &Workspace) -> ShellSmokeSnapshot {
         close_confirmation_open: workspace.close_confirmation.is_some(),
         focused_uses_accent_border: focused_pane_uses_accent_border(workspace.theme),
         drop_preview_uses_fill: drop_preview_uses_fill(),
+        output_dock_badged: workspace.output_badge,
     }
 }
 
@@ -201,6 +203,7 @@ mod tests {
     use crate::workspace::workspace_command::Command;
     use crate::workspace::workspace_dock::{DockVisibility, Docks};
     use crate::workspace::workspace_message::WorkspaceMessage;
+    use crate::workspace::workspace_output_reveal::OutputRevealKind;
     use crate::workspace::workspace_pane_state::PaneState;
     use crate::workspace::workspace_state::Workspace;
     use crate::workspace::workspace_stores::AppStores;
@@ -353,6 +356,19 @@ mod tests {
             &mut stores,
         );
         assert_eq!(dirty_tab_titles(&workspace), vec!["• untitled".to_string()]);
+    }
+
+    #[test]
+    fn shell_snapshot_tracks_output_badge() {
+        let mut stores = AppStores::new();
+        let mut workspace = Workspace::single_pane(
+            PaneState::new(vec![Box::new(ScratchPanel::new())]),
+            ThemeMode::Dark,
+        );
+        workspace.set_dock_factory(DockSide::Bottom, |_stores| Box::new(ScratchPanel::new()));
+        workspace.reveal_output(OutputRevealKind::Passive, &mut stores);
+        let snapshot = shell_smoke_snapshot(&workspace);
+        assert!(snapshot.output_dock_badged);
     }
 
     #[test]

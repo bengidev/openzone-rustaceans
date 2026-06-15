@@ -92,6 +92,10 @@ impl Panel for ScratchPanel {
         }
     }
 
+    fn is_interactive(&self) -> bool {
+        true
+    }
+
     fn status_contribution(&self, sink: &mut crate::workspace::workspace_panel::StatusSink) {
         let pos = self.content.cursor().position;
         let line = pos.line + 1;

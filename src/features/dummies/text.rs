@@ -88,6 +88,10 @@ impl Panel for TextPanel {
     /// carrying the command accelerator (e.g. `Cmd+W`) are *not*
     /// captured — they bubble up to the workspace keymap. This is the
     /// Text dummy demonstrating typing versus global shortcuts.
+    fn is_interactive(&self) -> bool {
+        true
+    }
+
     fn captures_chord(&self, chord: Chord) -> bool {
         if chord.mods.command {
             return false;

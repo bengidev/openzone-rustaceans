@@ -26,6 +26,7 @@ use crate::workspace::workspace_drag::{
 };
 use crate::workspace::workspace_location::{DockSide, PanelLocation};
 use crate::workspace::workspace_message::WorkspaceMessage;
+use crate::workspace::workspace_output_reveal::OutputRevealKind;
 use crate::workspace::workspace_pane_state::PaneState;
 use crate::workspace::workspace_panel::{CloseRequest, ErasedMessage, Panel, PanelKind};
 use crate::workspace::workspace_stores::AppStores;
@@ -114,6 +115,8 @@ pub struct Workspace {
     pub all_commands: Vec<CommandItem>,
     /// A palette command the app root must execute (e.g. NewWindow). Cleared on read.
     pub pending_app_command: Option<CommandId>,
+    /// Passive output has arrived while the Output Dock may still be hidden.
+    pub output_badge: bool,
 }
 
 /// Default workspace window size — matches `workspace_window_settings` in
@@ -153,6 +156,7 @@ impl Workspace {
             palette: PaletteState::new(),
             all_commands: Vec::new(),
             pending_app_command: None,
+            output_badge: false,
         }
     }
 
@@ -188,6 +192,7 @@ impl Workspace {
             palette: PaletteState::new(),
             all_commands: Vec::new(),
             pending_app_command: None,
+            output_badge: false,
         }
     }
 
@@ -232,6 +237,61 @@ impl Workspace {
             DockSide::Bottom => self.bottom_dock_factory,
         }?;
         Some(factory(stores))
+    }
+
+    /// Open `side`, creating a default surface from the composition-root
+    /// factory when the dock is empty. Returns whether the dock has tabs
+    /// after the transition.
+    fn ensure_dock_open(&mut self, side: DockSide, stores: &mut AppStores) -> bool {
+        self.docks.set_visibility(side, DockVisibility::Open);
+        if self.docks.get(side).is_empty() {
+            if let Some(panel) = self.create_dock_default_surface(side, stores) {
+                let dock = self.docks.get_mut(side);
+                dock.tabs.tabs.push(panel);
+                dock.tabs.active = 0;
+                return true;
+            }
+            return false;
+        }
+        true
+    }
+
+    fn dock_has_interactive_content(&self, side: DockSide) -> bool {
+        self.docks
+            .get(side)
+            .tabs
+            .active_panel()
+            .is_some_and(|panel| panel.is_interactive())
+    }
+
+    fn focus_dock_if_interactive(&mut self, side: DockSide) {
+        if self.dock_has_interactive_content(side) {
+            self.focused = PanelLocation::Dock(side);
+        }
+    }
+
+    fn clear_output_badge(&mut self) {
+        self.output_badge = false;
+    }
+
+    /// Reveal output in the Output Dock.
+    ///
+    /// Passive output badges the status-bar control without changing
+    /// visibility or focus. User-invoked output opens the dock through
+    /// the same factory seam as explicit dock open and focuses it only
+    /// when the active panel is interactive.
+    pub fn reveal_output(&mut self, kind: OutputRevealKind, stores: &mut AppStores) {
+        match kind {
+            OutputRevealKind::Passive => {
+                self.output_badge = true;
+            }
+            OutputRevealKind::UserInvoked => {
+                self.clear_output_badge();
+                if self.ensure_dock_open(DockSide::Bottom, stores) {
+                    self.focus_dock_if_interactive(DockSide::Bottom);
+                }
+            }
+        }
     }
 
     /// After restore, fill empty open docks from factories.
@@ -537,6 +597,9 @@ impl Workspace {
             }
             WorkspaceMessage::DockFocused(location) => {
                 self.focused = location;
+                if location == PanelLocation::Dock(DockSide::Bottom) {
+                    self.clear_output_badge();
+                }
                 if let PanelLocation::Dock(side) = location {
                     let dock = self.docks.get(side);
                     if dock.is_collapsed() && !dock.is_empty() {
@@ -638,6 +701,9 @@ impl Workspace {
                 if let Some(cmd) = self.palette.take_selection() {
                     self.dispatch_palette_command(cmd, stores);
                 }
+            }
+            WorkspaceMessage::RevealOutput(kind) => {
+                self.reveal_output(kind, stores);
             }
         }
     }
@@ -871,6 +937,9 @@ impl Workspace {
     pub fn apply_command(&mut self, command: Command, stores: &mut AppStores) {
         match command {
             Command::OpenDock(side) => {
+                if side == DockSide::Bottom {
+                    self.clear_output_badge();
+                }
                 self.docks.set_visibility(side, DockVisibility::Open);
                 if self.docks.get(side).is_empty() {
                     if let Some(panel) = self.create_dock_default_surface(side, stores) {
@@ -1204,11 +1273,11 @@ mod tests {
     use super::*;
     use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
     use crate::workspace::workspace_command::{Chord, Mods};
-    use crate::workspace::workspace_dock::DockVisibility;
+    use crate::workspace::workspace_dock::{Dock, DockVisibility, Docks};
+    use crate::workspace::workspace_message::WorkspaceMessage;
+    use crate::workspace::workspace_output_reveal::OutputRevealKind;
     use crate::workspace::workspace_panel::{Panel, erase};
     use crate::workspace::workspace_stores::CounterId;
-
-    /// Build a two-tab workspace plus the app-root stores it views over.
     fn three_tab_workspace() -> (Workspace, AppStores) {
         let mut stores = AppStores::new();
         let tabs: Vec<Box<dyn Panel>> = vec![
@@ -2555,5 +2624,119 @@ mod tests {
         let pane_state = workspace.panes.get(pane).unwrap();
         assert_eq!(pane_state.len(), 1);
         assert_eq!(pane_state.tabs[0].title(), "Text");
+    }
+
+    fn workspace_with_hidden_output_dock() -> (Workspace, AppStores) {
+        let stores = AppStores::new();
+        let center = PaneState::new(vec![Box::new(TextPanel::new())]);
+        let mut workspace = Workspace::with_docks(center, Docks::empty(), ThemeMode::Dark);
+        workspace.set_dock_factory(DockSide::Bottom, |_stores| Box::new(TextPanel::new()));
+        (workspace, stores)
+    }
+
+    #[test]
+    fn passive_output_badges_without_stealing_focus() {
+        let (mut workspace, mut stores) = workspace_with_hidden_output_dock();
+        let focused_before = workspace.focused;
+
+        workspace.reveal_output(OutputRevealKind::Passive, &mut stores);
+
+        assert!(workspace.output_badge);
+        assert!(workspace.docks.bottom.is_hidden());
+        assert_eq!(workspace.focused, focused_before);
+    }
+
+    #[test]
+    fn passive_output_preserves_visibility_when_collapsed_or_open() {
+        let (mut workspace, mut stores) = workspace_with_hidden_output_dock();
+        workspace.docks.bottom = Dock::with_extent(
+            PaneState::new(vec![Box::new(ClockPanel::new())]),
+            DockVisibility::Collapsed,
+            180.0,
+        );
+        workspace.reveal_output(OutputRevealKind::Passive, &mut stores);
+        assert!(workspace.output_badge);
+        assert!(workspace.docks.bottom.is_collapsed());
+
+        workspace.docks.bottom.visibility = DockVisibility::Open;
+        workspace.reveal_output(OutputRevealKind::Passive, &mut stores);
+        assert!(workspace.output_badge);
+        assert!(workspace.docks.bottom.is_open());
+    }
+
+    #[test]
+    fn user_invoked_output_opens_hidden_dock_via_factory() {
+        let (mut workspace, mut stores) = workspace_with_hidden_output_dock();
+        let focused_before = workspace.focused;
+
+        workspace.reveal_output(OutputRevealKind::UserInvoked, &mut stores);
+
+        assert!(workspace.docks.bottom.is_open());
+        assert_eq!(workspace.docks.bottom.tabs.len(), 1);
+        assert!(!workspace.output_badge);
+        assert_eq!(workspace.focused, PanelLocation::Dock(DockSide::Bottom));
+        assert_ne!(workspace.focused, focused_before);
+    }
+
+    #[test]
+    fn user_invoked_output_opens_collapsed_dock_without_stealing_focus_when_read_only() {
+        let (mut workspace, mut stores) = workspace_with_hidden_output_dock();
+        workspace.docks.bottom = Dock::with_extent(
+            PaneState::new(vec![Box::new(ClockPanel::new())]),
+            DockVisibility::Collapsed,
+            180.0,
+        );
+        let focused_before = workspace.focused;
+
+        workspace.reveal_output(OutputRevealKind::UserInvoked, &mut stores);
+
+        assert!(workspace.docks.bottom.is_open());
+        assert_eq!(workspace.focused, focused_before);
+    }
+
+    #[test]
+    fn user_invoked_output_focuses_interactive_content_when_already_open() {
+        let (mut workspace, mut stores) = workspace_with_hidden_output_dock();
+        workspace.docks.bottom = Dock::with_extent(
+            PaneState::new(vec![Box::new(TextPanel::new())]),
+            DockVisibility::Open,
+            180.0,
+        );
+        let center_focus = workspace.focused;
+
+        workspace.reveal_output(OutputRevealKind::UserInvoked, &mut stores);
+
+        assert!(workspace.docks.bottom.is_open());
+        assert_eq!(workspace.focused, PanelLocation::Dock(DockSide::Bottom));
+        assert_ne!(workspace.focused, center_focus);
+    }
+
+    #[test]
+    fn reveal_output_message_routes_through_update() {
+        let (mut workspace, mut stores) = workspace_with_hidden_output_dock();
+
+        workspace.update(
+            WorkspaceMessage::RevealOutput(OutputRevealKind::Passive),
+            &mut stores,
+        );
+        assert!(workspace.output_badge);
+
+        workspace.update(
+            WorkspaceMessage::RevealOutput(OutputRevealKind::UserInvoked),
+            &mut stores,
+        );
+        assert!(workspace.docks.bottom.is_open());
+        assert!(!workspace.output_badge);
+    }
+
+    #[test]
+    fn open_output_dock_clears_passive_badge() {
+        let (mut workspace, mut stores) = workspace_with_hidden_output_dock();
+        workspace.reveal_output(OutputRevealKind::Passive, &mut stores);
+        assert!(workspace.output_badge);
+
+        workspace.apply_command(Command::OpenDock(DockSide::Bottom), &mut stores);
+
+        assert!(!workspace.output_badge);
     }
 }

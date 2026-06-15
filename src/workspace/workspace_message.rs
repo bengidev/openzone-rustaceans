@@ -10,6 +10,7 @@
 
 use crate::workspace::workspace_command::{Chord, Command};
 use crate::workspace::workspace_location::PanelLocation;
+use crate::workspace::workspace_output_reveal::OutputRevealKind;
 use crate::workspace::workspace_panel::ErasedMessage;
 use iced::widget::pane_grid;
 use iced::{Point, Size};
@@ -80,6 +81,10 @@ pub enum WorkspaceMessage {
     PaletteDismiss,
     /// User clicked a specific palette item.
     PaletteItemClicked(usize),
+    /// Reveal output in the Output Dock — passive badge or user-invoked open.
+    /// The composition root lifts passive/user-invoked output from features
+    /// into this reducer seam.
+    RevealOutput(OutputRevealKind),
 }
 
 impl std::fmt::Debug for WorkspaceMessage {
@@ -149,6 +154,9 @@ impl std::fmt::Debug for WorkspaceMessage {
             WorkspaceMessage::PaletteDismiss => write!(f, "PaletteDismiss"),
             WorkspaceMessage::PaletteItemClicked(i) => {
                 write!(f, "PaletteItemClicked({i})")
+            }
+            WorkspaceMessage::RevealOutput(kind) => {
+                f.debug_tuple("RevealOutput").field(kind).finish()
             }
             WorkspaceMessage::ConfirmCloseCancel => f.debug_tuple("ConfirmCloseCancel").finish(),
         }
