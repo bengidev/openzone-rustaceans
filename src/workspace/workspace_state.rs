@@ -242,7 +242,7 @@ impl Workspace {
     /// Open `side`, creating a default surface from the composition-root
     /// factory when the dock is empty. Returns whether the dock has tabs
     /// after the transition.
-    fn ensure_dock_open(&mut self, side: DockSide, stores: &mut AppStores) -> bool {
+    fn open_dock_with_factory(&mut self, side: DockSide, stores: &mut AppStores) -> bool {
         self.docks.set_visibility(side, DockVisibility::Open);
         if self.docks.get(side).is_empty() {
             if let Some(panel) = self.create_dock_default_surface(side, stores) {
@@ -287,7 +287,7 @@ impl Workspace {
             }
             OutputRevealKind::UserInvoked => {
                 self.clear_output_badge();
-                if self.ensure_dock_open(DockSide::Bottom, stores) {
+                if self.open_dock_with_factory(DockSide::Bottom, stores) {
                     self.focus_dock_if_interactive(DockSide::Bottom);
                 }
             }
@@ -940,16 +940,8 @@ impl Workspace {
                 if side == DockSide::Bottom {
                     self.clear_output_badge();
                 }
-                self.docks.set_visibility(side, DockVisibility::Open);
-                if self.docks.get(side).is_empty() {
-                    if let Some(panel) = self.create_dock_default_surface(side, stores) {
-                        let dock = self.docks.get_mut(side);
-                        dock.tabs.tabs.push(panel);
-                        dock.tabs.active = 0;
-                        self.focused = PanelLocation::Dock(side);
-                    }
-                } else {
-                    self.focused = PanelLocation::Dock(side);
+                if self.open_dock_with_factory(side, stores) {
+                    self.focus_dock_if_interactive(side);
                 }
             }
             Command::CollapseDock(side) => {
@@ -1406,13 +1398,25 @@ mod tests {
     }
 
     #[test]
-    fn open_dock_opens_and_focuses() {
-        let (mut workspace, mut stores) = workspace_with_right_dock();
+    fn open_dock_focuses_interactive_content() {
+        let (mut workspace, mut stores) = workspace_with_empty_docks();
+        workspace.set_dock_factory(DockSide::Right, |_stores| Box::new(TextPanel::new()));
 
         workspace.apply_command(Command::OpenDock(DockSide::Right), &mut stores);
 
         assert!(workspace.docks.right.is_open());
         assert_eq!(workspace.focused, PanelLocation::Dock(DockSide::Right));
+    }
+
+    #[test]
+    fn open_dock_does_not_steal_focus_for_read_only_content() {
+        let (mut workspace, mut stores) = workspace_with_right_dock();
+        let focused_before = workspace.focused;
+
+        workspace.apply_command(Command::OpenDock(DockSide::Right), &mut stores);
+
+        assert!(workspace.docks.right.is_open());
+        assert_eq!(workspace.focused, focused_before);
     }
 
     #[test]
@@ -2738,5 +2742,38 @@ mod tests {
         workspace.apply_command(Command::OpenDock(DockSide::Bottom), &mut stores);
 
         assert!(!workspace.output_badge);
+    }
+
+    #[test]
+    fn dock_focused_clears_output_badge() {
+        let (mut workspace, mut stores) = workspace_with_hidden_output_dock();
+        workspace.docks.bottom = Dock::with_extent(
+            PaneState::new(vec![Box::new(TextPanel::new())]),
+            DockVisibility::Open,
+            180.0,
+        );
+        workspace.reveal_output(OutputRevealKind::Passive, &mut stores);
+        assert!(workspace.output_badge);
+
+        workspace.update(
+            WorkspaceMessage::DockFocused(PanelLocation::Dock(DockSide::Bottom)),
+            &mut stores,
+        );
+
+        assert!(!workspace.output_badge);
+    }
+
+    #[test]
+    fn user_invoked_output_without_factory_leaves_dock_hidden() {
+        let mut stores = AppStores::new();
+        let center = PaneState::new(vec![Box::new(TextPanel::new())]);
+        let mut workspace = Workspace::with_docks(center, Docks::empty(), ThemeMode::Dark);
+        let focused_before = workspace.focused;
+
+        workspace.reveal_output(OutputRevealKind::UserInvoked, &mut stores);
+
+        assert!(workspace.docks.bottom.is_open());
+        assert!(workspace.docks.bottom.is_empty());
+        assert_eq!(workspace.focused, focused_before);
     }
 }

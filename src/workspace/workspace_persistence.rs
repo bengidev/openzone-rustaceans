@@ -331,6 +331,7 @@ mod tests {
     use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
     use crate::workspace::workspace_command::Command;
     use crate::workspace::workspace_location::DockSide;
+    use crate::workspace::workspace_message::WorkspaceMessage;
     use crate::workspace::workspace_stores::AppStores;
 
     fn test_registry() -> PanelRegistry {
@@ -470,6 +471,10 @@ mod tests {
     fn restore_preserves_dock_open_state_and_focus() {
         let (mut workspace, mut stores) = seeded_workspace();
         workspace.apply_command(Command::OpenDock(DockSide::Right), &mut stores);
+        workspace.update(
+            WorkspaceMessage::DockFocused(PanelLocation::Dock(DockSide::Right)),
+            &mut stores,
+        );
 
         let snapshot = capture(&workspace, &stores);
         let mut restored_stores = AppStores::new();

@@ -15,16 +15,17 @@ pub enum OutputRevealKind {
     UserInvoked,
 }
 
-/// Status-bar label for the Output dock control, including visibility
-/// affordance and an optional passive-output badge.
+/// Status-bar label for a dock control, including visibility affordance
+/// and an optional passive-output badge.
 pub fn output_dock_control_label(
+    label: &str,
     visibility: crate::workspace::workspace_dock::DockVisibility,
     badged: bool,
 ) -> String {
     let base = match visibility {
-        crate::workspace::workspace_dock::DockVisibility::Open => "▾ Output",
-        crate::workspace::workspace_dock::DockVisibility::Collapsed => "▸ Output",
-        crate::workspace::workspace_dock::DockVisibility::Hidden => "Output",
+        crate::workspace::workspace_dock::DockVisibility::Open => format!("▾ {label}"),
+        crate::workspace::workspace_dock::DockVisibility::Collapsed => format!("▸ {label}"),
+        crate::workspace::workspace_dock::DockVisibility::Hidden => label.to_string(),
     };
     if badged {
         format!("● {base}")
@@ -45,7 +46,7 @@ mod tests {
             DockVisibility::Collapsed,
             DockVisibility::Open,
         ] {
-            let label = output_dock_control_label(visibility, true);
+            let label = output_dock_control_label("Output", visibility, true);
             assert!(label.starts_with("● "));
         }
     }
@@ -53,15 +54,15 @@ mod tests {
     #[test]
     fn unbadged_label_matches_visibility_affordance() {
         assert_eq!(
-            output_dock_control_label(DockVisibility::Hidden, false),
+            output_dock_control_label("Output", DockVisibility::Hidden, false),
             "Output"
         );
         assert_eq!(
-            output_dock_control_label(DockVisibility::Collapsed, false),
+            output_dock_control_label("Output", DockVisibility::Collapsed, false),
             "▸ Output"
         );
         assert_eq!(
-            output_dock_control_label(DockVisibility::Open, false),
+            output_dock_control_label("Output", DockVisibility::Open, false),
             "▾ Output"
         );
     }
