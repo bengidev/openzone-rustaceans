@@ -621,12 +621,7 @@ mod tests {
         });
 
         let mut restored_stores = AppStores::new();
-        let mut restored = restore(
-            &snapshot,
-            &registry,
-            &mut restored_stores,
-            ThemeMode::Dark,
-        );
+        let mut restored = restore(&snapshot, &registry, &mut restored_stores, ThemeMode::Dark);
         assert!(restored.panes.iter().next().unwrap().1.is_empty());
 
         restored.set_scratch_factory(|| Box::new(ScratchPanel::new()));

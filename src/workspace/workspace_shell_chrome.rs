@@ -409,6 +409,15 @@ mod tests {
         assert!(snapshot.focused_uses_accent_border);
     }
 
+    fn snapshot_dock_control_enabled(snapshot: &ShellSmokeSnapshot, side: DockSide) -> bool {
+        snapshot
+            .dock_controls_enabled
+            .iter()
+            .find(|(dock_side, _)| *dock_side == side)
+            .map(|(_, enabled)| *enabled)
+            .unwrap_or_else(|| panic!("missing dock control entry for {side:?}"))
+    }
+
     #[test]
     fn status_bar_dock_controls_reflect_enabled_state() {
         let workspace = Workspace::single_pane(
@@ -416,9 +425,9 @@ mod tests {
             ThemeMode::Dark,
         );
         let snapshot = shell_smoke_snapshot(&workspace);
-        assert!(!snapshot.dock_controls_enabled[0].1);
-        assert!(!snapshot.dock_controls_enabled[1].1);
-        assert!(!snapshot.dock_controls_enabled[2].1);
+        assert!(!snapshot_dock_control_enabled(&snapshot, DockSide::Left));
+        assert!(!snapshot_dock_control_enabled(&snapshot, DockSide::Right));
+        assert!(!snapshot_dock_control_enabled(&snapshot, DockSide::Bottom));
 
         let mut stores = AppStores::new();
         let mut workspace = Workspace::single_pane(
@@ -430,8 +439,8 @@ mod tests {
         let factory: DockSurfaceFactory = |_| Box::new(ScratchPanel::new());
         workspace.set_dock_factory(DockSide::Bottom, factory);
         let snapshot = shell_smoke_snapshot(&workspace);
-        assert!(!snapshot.dock_controls_enabled[0].1);
-        assert!(!snapshot.dock_controls_enabled[1].1);
-        assert!(snapshot.dock_controls_enabled[2].1);
+        assert!(!snapshot_dock_control_enabled(&snapshot, DockSide::Left));
+        assert!(!snapshot_dock_control_enabled(&snapshot, DockSide::Right));
+        assert!(snapshot_dock_control_enabled(&snapshot, DockSide::Bottom));
     }
 }

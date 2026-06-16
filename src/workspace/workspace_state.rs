@@ -2815,7 +2815,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_subscription_batches_panel_streams_without_panic() {
+    fn workspace_subscription_constructs_without_panic() {
         let mut stores = AppStores::new();
         let workspace = Workspace::single_pane(
             PaneState::new(vec![

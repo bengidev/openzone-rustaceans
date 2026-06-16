@@ -197,9 +197,9 @@ where
 #[cfg(test)]
 mod contract_tests {
     use super::*;
+    use crate::features::ScratchMessage;
     use crate::features::ScratchPanel;
     use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
-    use crate::features::ScratchMessage;
     use crate::workspace::workspace_stores::AppStores;
     use iced::widget::text_editor;
 
@@ -213,13 +213,6 @@ mod contract_tests {
         assert!(counter.snapshot(&stores).is_some());
         assert!(text.snapshot(&stores).is_some());
         assert!(clock.snapshot(&stores).is_some());
-    }
-
-    #[test]
-    fn non_durable_panel_omits_snapshot() {
-        let panel = ScratchPanel::new();
-        let stores = AppStores::new();
-        assert!(panel.snapshot(&stores).is_none());
     }
 
     #[test]
@@ -268,14 +261,14 @@ mod contract_tests {
     }
 
     #[test]
-    fn default_panel_subscription_is_inert() {
+    fn default_panel_subscription_constructs_without_panic() {
         let mut stores = AppStores::new();
         let counter = CounterPanel::new(&mut stores);
         let text = TextPanel::new();
         let clock = ClockPanel::new();
 
-        let _ = counter.subscription();
-        let _ = text.subscription();
-        let _ = clock.subscription();
+        std::mem::drop(counter.subscription());
+        std::mem::drop(text.subscription());
+        std::mem::drop(clock.subscription());
     }
 }

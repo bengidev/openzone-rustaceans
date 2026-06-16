@@ -1606,6 +1606,52 @@ mod window_close_guard_tests {
 mod app_root_routing_tests {
     use super::*;
 
+    fn empty_open_zone(stores: AppStores, layout_store: Arc<dyn LayoutStore>) -> OpenZone {
+        OpenZone {
+            onboarding: None,
+            onboarding_window: None,
+            workspaces: HashMap::new(),
+            stores,
+            persistence: Arc::new(InMemoryOnboardingPersistence::new()),
+            registry: build_registry(),
+            layout_store,
+            theme_mode: ThemeMode::Dark,
+            primary_window: None,
+            window_ordinals: HashMap::new(),
+            next_window_ordinal: 0,
+            pending_close_windows: Vec::new(),
+            close_eval_scheduled: false,
+            app_close_prompt: None,
+        }
+    }
+
+    fn open_zone_with_workspace(
+        window_id: window::Id,
+        workspace: Workspace,
+        stores: AppStores,
+        layout_store: Arc<dyn LayoutStore>,
+        primary_window: Option<window::Id>,
+        window_ordinals: HashMap<window::Id, usize>,
+        next_window_ordinal: usize,
+    ) -> OpenZone {
+        OpenZone {
+            onboarding: None,
+            onboarding_window: None,
+            workspaces: HashMap::from([(window_id, workspace)]),
+            stores,
+            persistence: Arc::new(InMemoryOnboardingPersistence::new()),
+            registry: build_registry(),
+            layout_store,
+            theme_mode: ThemeMode::Dark,
+            primary_window,
+            window_ordinals,
+            next_window_ordinal,
+            pending_close_windows: Vec::new(),
+            close_eval_scheduled: false,
+            app_close_prompt: None,
+        }
+    }
+
     #[test]
     fn build_workspace_seeds_scratch_tab_and_dock_factories() {
         let mut stores = AppStores::new();
@@ -1622,22 +1668,7 @@ mod app_root_routing_tests {
 
     #[test]
     fn open_additional_workspace_seeds_independent_scratch_layout() {
-        let mut app = OpenZone {
-            onboarding: None,
-            onboarding_window: None,
-            workspaces: HashMap::new(),
-            stores: AppStores::new(),
-            persistence: Arc::new(InMemoryOnboardingPersistence::new()),
-            registry: build_registry(),
-            layout_store: Arc::new(NoopLayoutStore),
-            theme_mode: ThemeMode::Dark,
-            primary_window: None,
-            window_ordinals: HashMap::new(),
-            next_window_ordinal: 0,
-            pending_close_windows: Vec::new(),
-            close_eval_scheduled: false,
-            app_close_prompt: None,
-        };
+        let mut app = empty_open_zone(AppStores::new(), Arc::new(NoopLayoutStore));
 
         let _task = app.open_additional_workspace();
         let window_id = *app.workspaces.keys().next().expect("workspace window");
@@ -1663,22 +1694,7 @@ mod app_root_routing_tests {
             .save(&snapshot)
             .expect("save scratch-only snapshot");
 
-        let mut app = OpenZone {
-            onboarding: None,
-            onboarding_window: None,
-            workspaces: HashMap::new(),
-            stores,
-            persistence: Arc::new(InMemoryOnboardingPersistence::new()),
-            registry: build_registry(),
-            layout_store,
-            theme_mode: ThemeMode::Dark,
-            primary_window: None,
-            window_ordinals: HashMap::new(),
-            next_window_ordinal: 0,
-            pending_close_windows: Vec::new(),
-            close_eval_scheduled: false,
-            app_close_prompt: None,
-        };
+        let mut app = empty_open_zone(stores, layout_store);
 
         let workspace = app.restore_or_build_workspace();
         assert_eq!(
@@ -1692,22 +1708,15 @@ mod app_root_routing_tests {
         let window_id = window::Id::unique();
         let mut stores = AppStores::new();
         let workspace = build_workspace(&mut stores, ThemeMode::Dark);
-        let mut app = OpenZone {
-            onboarding: None,
-            onboarding_window: None,
-            workspaces: HashMap::from([(window_id, workspace)]),
+        let mut app = open_zone_with_workspace(
+            window_id,
+            workspace,
             stores,
-            persistence: Arc::new(InMemoryOnboardingPersistence::new()),
-            registry: build_registry(),
-            layout_store: Arc::new(NoopLayoutStore),
-            theme_mode: ThemeMode::Dark,
-            primary_window: Some(window_id),
-            window_ordinals: HashMap::from([(window_id, 1)]),
-            next_window_ordinal: 1,
-            pending_close_windows: Vec::new(),
-            close_eval_scheduled: false,
-            app_close_prompt: None,
-        };
+            Arc::new(NoopLayoutStore),
+            Some(window_id),
+            HashMap::from([(window_id, 1)]),
+            1,
+        );
 
         let _ = app.update(Message::Workspace {
             window: window_id,
