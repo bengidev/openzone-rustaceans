@@ -1085,13 +1085,7 @@ pub fn close_prompt_overlay<'a, Message: Clone + 'a>(
     on_cancel: Message,
     on_discard: Message,
 ) -> Element<'a, Message> {
-    let overlay = container(Space::new())
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.4))),
-            ..container::Style::default()
-        });
+    let close_prompt_spec = shell_chrome::ClosePromptOverlaySpec::current();
 
     let title_text = text(title)
         .size(TypeRole::LabelMd.size())
@@ -1200,8 +1194,22 @@ pub fn close_prompt_overlay<'a, Message: Clone + 'a>(
         .align_x(Horizontal::Center)
         .align_y(iced::alignment::Vertical::Center);
 
-    stack![base, overlay, modal_centered]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    if close_prompt_spec.has_visual_backdrop {
+        let overlay = container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.4))),
+                ..container::Style::default()
+            });
+        stack![base, overlay, modal_centered]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        stack![base, modal_centered]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
 }

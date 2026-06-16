@@ -601,4 +601,34 @@ mod tests {
         assert_eq!(snap.active, 0);
         assert_eq!(snap.tabs[0].kind, PanelKind::Text);
     }
+
+    #[test]
+    fn restore_scratch_only_layout_then_fallback_inserts_untitled() {
+        let stores = AppStores::new();
+        let workspace = Workspace::single_pane(
+            PaneState::new(vec![Box::new(ScratchPanel::new())]),
+            ThemeMode::Dark,
+        );
+        let snapshot = capture(&workspace, &stores);
+        let CenterNode::Pane(pane_snapshot) = &snapshot.center else {
+            panic!("expected single center pane");
+        };
+        assert!(pane_snapshot.tabs.is_empty());
+
+        let mut registry = test_registry();
+        registry.register(PanelKind::Scratch, |snapshot, _stores| {
+            Box::new(ScratchPanel::from_snapshot(snapshot))
+        });
+
+        let mut restored_stores = AppStores::new();
+        let mut restored = restore(&snapshot, &registry, &mut restored_stores, ThemeMode::Dark);
+        assert!(restored.panes.iter().next().unwrap().1.is_empty());
+
+        restored.set_scratch_factory(|| Box::new(ScratchPanel::new()));
+        restored.ensure_scratch_fallback();
+
+        let pane = restored.panes.iter().next().unwrap().1;
+        assert_eq!(pane.tabs.len(), 1);
+        assert_eq!(pane.tabs[0].title(), "untitled");
+    }
 }

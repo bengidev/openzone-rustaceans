@@ -150,4 +150,34 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn snapshot_is_none_for_non_durable_panel() {
+        let panel = ScratchPanel::new();
+        let stores = AppStores::new();
+        assert!(panel.snapshot(&stores).is_none());
+    }
+
+    #[test]
+    fn line_edit_updates_status_cursor_position() {
+        let mut panel = ScratchPanel::new();
+        let mut stores = AppStores::new();
+        panel.update(
+            crate::workspace::erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                text_editor::Edit::Insert('\n'),
+            ))),
+            &mut stores,
+        );
+        panel.update(
+            crate::workspace::erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                text_editor::Edit::Insert('a'),
+            ))),
+            &mut stores,
+        );
+
+        let mut segments = Vec::new();
+        let mut sink = StatusSink::new(&mut segments);
+        panel.status_contribution(&mut sink);
+        assert_eq!(segments[0], "Ln 2, Col 2");
+    }
 }

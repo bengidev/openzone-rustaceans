@@ -2776,4 +2776,56 @@ mod tests {
         assert!(workspace.docks.bottom.is_empty());
         assert_eq!(workspace.focused, focused_before);
     }
+
+    #[test]
+    fn ensure_scratch_fallback_inserts_untitled_when_workbench_is_empty() {
+        use crate::features::ScratchPanel;
+
+        let mut workspace = Workspace::single_pane(PaneState::empty(), ThemeMode::Dark);
+        workspace.set_scratch_factory(|| Box::new(ScratchPanel::new()));
+
+        workspace.ensure_scratch_fallback();
+
+        let pane = workspace.panes.iter().next().unwrap().1;
+        assert_eq!(pane.tabs.len(), 1);
+        assert_eq!(pane.tabs[0].title(), "untitled");
+        assert_eq!(workspace.focused, only_center_location(&workspace));
+    }
+
+    #[test]
+    fn closing_last_center_tab_with_scratch_factory_inserts_untitled() {
+        use crate::features::ScratchPanel;
+
+        let mut stores = AppStores::new();
+        let mut workspace = Workspace::single_pane(
+            PaneState::new(vec![Box::new(CounterPanel::new(&mut stores))]),
+            ThemeMode::Dark,
+        );
+        workspace.set_scratch_factory(|| Box::new(ScratchPanel::new()));
+        let location = only_center_location(&workspace);
+
+        workspace.update(
+            WorkspaceMessage::TabCloseRequested { location, tab: 0 },
+            &mut stores,
+        );
+
+        let pane = workspace.panes.iter().next().unwrap().1;
+        assert_eq!(pane.tabs.len(), 1);
+        assert_eq!(pane.tabs[0].title(), "untitled");
+    }
+
+    #[test]
+    fn workspace_subscription_constructs_without_panic() {
+        let mut stores = AppStores::new();
+        let workspace = Workspace::single_pane(
+            PaneState::new(vec![
+                Box::new(CounterPanel::new(&mut stores)),
+                Box::new(TextPanel::new()),
+                Box::new(ClockPanel::new()),
+            ]),
+            ThemeMode::Dark,
+        );
+
+        let _subscription = workspace.subscription();
+    }
 }

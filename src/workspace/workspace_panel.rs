@@ -193,3 +193,82 @@ where
 {
     message.downcast::<M>().ok()
 }
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+    use crate::features::ScratchMessage;
+    use crate::features::ScratchPanel;
+    use crate::features::dummies::{ClockPanel, CounterPanel, TextPanel};
+    use crate::workspace::workspace_stores::AppStores;
+    use iced::widget::text_editor;
+
+    #[test]
+    fn durable_panels_expose_optional_snapshots() {
+        let mut stores = AppStores::new();
+        let counter = CounterPanel::new(&mut stores);
+        let text = TextPanel::new();
+        let clock = ClockPanel::new();
+
+        assert!(counter.snapshot(&stores).is_some());
+        assert!(text.snapshot(&stores).is_some());
+        assert!(clock.snapshot(&stores).is_some());
+    }
+
+    #[test]
+    fn static_titles_use_borrowed_cow_without_allocating() {
+        let counter = CounterPanel::new(&mut AppStores::new());
+        let text = TextPanel::new();
+        let scratch = ScratchPanel::new();
+
+        assert!(matches!(counter.title(), std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(text.title(), std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(scratch.title(), std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn dirty_and_close_request_contracts_differ_by_panel_kind() {
+        let mut stores = AppStores::new();
+        let clean_scratch = ScratchPanel::new();
+        assert!(!clean_scratch.is_dirty());
+        assert_eq!(clean_scratch.close_request(), CloseRequest::Allowed);
+
+        let mut dirty_scratch = ScratchPanel::new();
+        dirty_scratch.update(
+            erase(ScratchMessage::Edit(text_editor::Action::Edit(
+                text_editor::Edit::Insert('x'),
+            ))),
+            &mut stores,
+        );
+        assert!(dirty_scratch.is_dirty());
+        assert!(matches!(
+            dirty_scratch.close_request(),
+            CloseRequest::Confirm { .. }
+        ));
+
+        let counter = CounterPanel::new(&mut stores);
+        assert!(!counter.is_dirty());
+        assert_eq!(counter.close_request(), CloseRequest::Allowed);
+    }
+
+    #[test]
+    fn status_sink_collects_focused_panel_segments() {
+        let panel = ScratchPanel::new();
+        let mut segments = Vec::new();
+        let mut sink = StatusSink::new(&mut segments);
+        panel.status_contribution(&mut sink);
+        assert_eq!(segments, vec!["Ln 1, Col 1", "Plain Text"]);
+    }
+
+    #[test]
+    fn default_panel_subscription_constructs_without_panic() {
+        let mut stores = AppStores::new();
+        let counter = CounterPanel::new(&mut stores);
+        let text = TextPanel::new();
+        let clock = ClockPanel::new();
+
+        std::mem::drop(counter.subscription());
+        std::mem::drop(text.subscription());
+        std::mem::drop(clock.subscription());
+    }
+}
