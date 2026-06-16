@@ -25,6 +25,7 @@ pub mod workspace_layout_metrics;
 pub mod workspace_layout_store;
 pub mod workspace_location;
 pub mod workspace_message;
+pub mod workspace_output_reveal;
 pub mod workspace_pane_state;
 pub mod workspace_panel;
 pub mod workspace_persistence;
@@ -41,6 +42,7 @@ pub use workspace_drag::{Direction, DragState, DropTarget, SplitPaneTarget, TabS
 pub use workspace_layout_store::{FileLayoutStore, LayoutStore, LayoutStoreError};
 pub use workspace_location::{DockSide, PanelLocation};
 pub use workspace_message::WorkspaceMessage;
+pub use workspace_output_reveal::{OutputRevealKind, output_dock_control_label};
 pub use workspace_pane_state::PaneState;
 pub use workspace_panel::{
     CloseRequest, ErasedMessage, Panel, PanelKind, StatusSink, downcast, erase,

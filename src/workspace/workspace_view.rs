@@ -419,11 +419,15 @@ fn dock_control_button<'a>(
 
     let color = shell_chrome::dock_control_color(theme, visibility);
 
-    // Label with state indicator
-    let display_label = match visibility {
-        DockVisibility::Open => format!("▾ {label}"),
-        DockVisibility::Collapsed => format!("▸ {label}"),
-        DockVisibility::Hidden => label.to_string(),
+    // Label with state indicator and optional passive-output badge.
+    let display_label = if side == DockSide::Bottom {
+        crate::workspace::output_dock_control_label(label, visibility, workspace.output_badge)
+    } else {
+        match visibility {
+            DockVisibility::Open => format!("▾ {label}"),
+            DockVisibility::Collapsed => format!("▸ {label}"),
+            DockVisibility::Hidden => label.to_string(),
+        }
     };
 
     let btn = button(

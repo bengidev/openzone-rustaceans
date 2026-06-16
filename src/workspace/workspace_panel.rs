@@ -139,6 +139,14 @@ pub trait Panel {
         false
     }
 
+    /// Whether the panel accepts direct keyboard interaction when focused.
+    ///
+    /// The workspace uses this when opening docks from user-invoked output
+    /// so read-only surfaces do not steal focus from the Workbench.
+    fn is_interactive(&self) -> bool {
+        false
+    }
+
     /// A handle-only snapshot for layout persistence. Reads from
     /// `stores` so a Counter panel persists the canonical store count
     /// rather than a stale local copy. Stores a rehydration handle
