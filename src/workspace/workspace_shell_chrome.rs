@@ -53,6 +53,20 @@ impl PaletteOverlaySpec {
     }
 }
 
+/// Layout contract for dirty-tab close confirmation overlays.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClosePromptOverlaySpec {
+    pub has_visual_backdrop: bool,
+}
+
+impl ClosePromptOverlaySpec {
+    pub fn current() -> Self {
+        Self {
+            has_visual_backdrop: true,
+        }
+    }
+}
+
 /// Whether drag/drop preview rectangles should be filled.
 pub fn drop_preview_uses_fill() -> bool {
     false
@@ -116,6 +130,7 @@ pub struct ShellSmokeSnapshot {
     pub palette_open: bool,
     pub palette_has_visual_backdrop: bool,
     pub close_confirmation_open: bool,
+    pub close_confirmation_has_visual_backdrop: bool,
     pub focused_uses_accent_border: bool,
     pub drop_preview_uses_fill: bool,
     pub output_dock_badged: bool,
@@ -155,6 +170,8 @@ pub fn shell_smoke_snapshot(workspace: &Workspace) -> ShellSmokeSnapshot {
         palette_open: workspace.palette.open,
         palette_has_visual_backdrop: PaletteOverlaySpec::current().has_visual_backdrop,
         close_confirmation_open: workspace.close_confirmation.is_some(),
+        close_confirmation_has_visual_backdrop: ClosePromptOverlaySpec::current()
+            .has_visual_backdrop,
         focused_uses_accent_border: focused_pane_uses_accent_border(workspace.theme),
         drop_preview_uses_fill: drop_preview_uses_fill(),
         output_dock_badged: workspace.output_badge,
@@ -240,6 +257,13 @@ mod tests {
         assert!(!spec.has_visual_backdrop);
         assert!(spec.top_inset > workspace_layout_metrics::title_bar_height());
         assert_eq!(spec.max_width, PALETTE_MAX_WIDTH);
+    }
+
+    #[test]
+    fn close_confirmation_uses_visual_backdrop() {
+        let spec = ClosePromptOverlaySpec::current();
+        assert!(spec.has_visual_backdrop);
+        assert!(!PaletteOverlaySpec::current().has_visual_backdrop);
     }
 
     #[test]
@@ -381,6 +405,33 @@ mod tests {
         assert!(!snapshot.palette_open);
         assert!(!snapshot.palette_has_visual_backdrop);
         assert!(!snapshot.close_confirmation_open);
+        assert!(snapshot.close_confirmation_has_visual_backdrop);
         assert!(snapshot.focused_uses_accent_border);
+    }
+
+    #[test]
+    fn status_bar_dock_controls_reflect_enabled_state() {
+        let workspace = Workspace::single_pane(
+            PaneState::new(vec![Box::new(ScratchPanel::new())]),
+            ThemeMode::Dark,
+        );
+        let snapshot = shell_smoke_snapshot(&workspace);
+        assert!(!snapshot.dock_controls_enabled[0].1);
+        assert!(!snapshot.dock_controls_enabled[1].1);
+        assert!(!snapshot.dock_controls_enabled[2].1);
+
+        let mut stores = AppStores::new();
+        let mut workspace = Workspace::single_pane(
+            PaneState::new(vec![Box::new(
+                crate::features::dummies::counter::CounterPanel::new(&mut stores),
+            )]),
+            ThemeMode::Dark,
+        );
+        let factory: DockSurfaceFactory = |_| Box::new(ScratchPanel::new());
+        workspace.set_dock_factory(DockSide::Bottom, factory);
+        let snapshot = shell_smoke_snapshot(&workspace);
+        assert!(!snapshot.dock_controls_enabled[0].1);
+        assert!(!snapshot.dock_controls_enabled[1].1);
+        assert!(snapshot.dock_controls_enabled[2].1);
     }
 }

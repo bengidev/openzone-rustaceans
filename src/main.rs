@@ -1390,6 +1390,35 @@ impl LayoutStore for CountingLayoutStore {
 }
 
 #[cfg(test)]
+struct InMemoryLayoutStore {
+    snapshot: std::sync::Mutex<Option<workspace::LayoutSnapshot>>,
+}
+
+#[cfg(test)]
+impl InMemoryLayoutStore {
+    fn new() -> Self {
+        Self {
+            snapshot: std::sync::Mutex::new(None),
+        }
+    }
+}
+
+#[cfg(test)]
+impl LayoutStore for InMemoryLayoutStore {
+    fn load(&self) -> Option<workspace::LayoutSnapshot> {
+        self.snapshot.lock().unwrap().clone()
+    }
+
+    fn save(
+        &self,
+        snapshot: &workspace::LayoutSnapshot,
+    ) -> Result<(), workspace::LayoutStoreError> {
+        *self.snapshot.lock().unwrap() = Some(snapshot.clone());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod window_close_guard_tests {
     use super::*;
     use crate::features::ScratchMessage;
@@ -1570,5 +1599,145 @@ mod window_close_guard_tests {
             app.app_close_prompt,
             Some(AppClosePrompt::AppQuit { .. })
         ));
+    }
+}
+
+#[cfg(test)]
+mod app_root_routing_tests {
+    use super::*;
+
+    #[test]
+    fn build_workspace_seeds_scratch_tab_and_dock_factories() {
+        let mut stores = AppStores::new();
+        let workspace = build_workspace(&mut stores, ThemeMode::Dark);
+
+        assert_eq!(
+            workspace.panes.iter().next().unwrap().1.tabs[0].title(),
+            "untitled"
+        );
+        assert!(workspace.has_dock_factory(DockSide::Left));
+        assert!(workspace.has_dock_factory(DockSide::Right));
+        assert!(workspace.has_dock_factory(DockSide::Bottom));
+    }
+
+    #[test]
+    fn open_additional_workspace_seeds_independent_scratch_layout() {
+        let mut app = OpenZone {
+            onboarding: None,
+            onboarding_window: None,
+            workspaces: HashMap::new(),
+            stores: AppStores::new(),
+            persistence: Arc::new(InMemoryOnboardingPersistence::new()),
+            registry: build_registry(),
+            layout_store: Arc::new(NoopLayoutStore),
+            theme_mode: ThemeMode::Dark,
+            primary_window: None,
+            window_ordinals: HashMap::new(),
+            next_window_ordinal: 0,
+            pending_close_windows: Vec::new(),
+            close_eval_scheduled: false,
+            app_close_prompt: None,
+        };
+
+        let _task = app.open_additional_workspace();
+        let window_id = *app.workspaces.keys().next().expect("workspace window");
+        let workspace = &app.workspaces[&window_id];
+
+        assert_eq!(
+            workspace.panes.iter().next().unwrap().1.tabs[0].title(),
+            "untitled"
+        );
+        assert!(workspace.has_dock_factory(DockSide::Bottom));
+    }
+
+    #[test]
+    fn restore_or_build_applies_scratch_fallback_after_empty_restore() {
+        let layout_store = Arc::new(InMemoryLayoutStore::new());
+        let stores = AppStores::new();
+        let scratch_only = workspace::Workspace::single_pane(
+            PaneState::new(vec![Box::new(ScratchPanel::new())]),
+            ThemeMode::Dark,
+        );
+        let snapshot = workspace::capture(&scratch_only, &stores);
+        layout_store
+            .save(&snapshot)
+            .expect("save scratch-only snapshot");
+
+        let mut app = OpenZone {
+            onboarding: None,
+            onboarding_window: None,
+            workspaces: HashMap::new(),
+            stores,
+            persistence: Arc::new(InMemoryOnboardingPersistence::new()),
+            registry: build_registry(),
+            layout_store,
+            theme_mode: ThemeMode::Dark,
+            primary_window: None,
+            window_ordinals: HashMap::new(),
+            next_window_ordinal: 0,
+            pending_close_windows: Vec::new(),
+            close_eval_scheduled: false,
+            app_close_prompt: None,
+        };
+
+        let workspace = app.restore_or_build_workspace();
+        assert_eq!(
+            workspace.panes.iter().next().unwrap().1.tabs[0].title(),
+            "untitled"
+        );
+    }
+
+    #[test]
+    fn command_palette_selection_executes_new_window_at_app_root() {
+        let window_id = window::Id::unique();
+        let mut stores = AppStores::new();
+        let workspace = build_workspace(&mut stores, ThemeMode::Dark);
+        let mut app = OpenZone {
+            onboarding: None,
+            onboarding_window: None,
+            workspaces: HashMap::from([(window_id, workspace)]),
+            stores,
+            persistence: Arc::new(InMemoryOnboardingPersistence::new()),
+            registry: build_registry(),
+            layout_store: Arc::new(NoopLayoutStore),
+            theme_mode: ThemeMode::Dark,
+            primary_window: Some(window_id),
+            window_ordinals: HashMap::from([(window_id, 1)]),
+            next_window_ordinal: 1,
+            pending_close_windows: Vec::new(),
+            close_eval_scheduled: false,
+            app_close_prompt: None,
+        };
+
+        let _ = app.update(Message::Workspace {
+            window: window_id,
+            message: WorkspaceMessage::TogglePalette,
+        });
+        let _ = app.update(Message::Workspace {
+            window: window_id,
+            message: WorkspaceMessage::PaletteQueryChanged("new window".into()),
+        });
+        let _ = app.update(Message::Workspace {
+            window: window_id,
+            message: WorkspaceMessage::PaletteItemClicked(0),
+        });
+
+        assert_eq!(app.workspaces.len(), 2);
+        let secondary = app
+            .workspaces
+            .keys()
+            .find(|id| **id != window_id)
+            .expect("secondary window");
+        assert_eq!(
+            app.workspaces[secondary]
+                .panes
+                .iter()
+                .next()
+                .unwrap()
+                .1
+                .tabs[0]
+                .title(),
+            "untitled"
+        );
     }
 }
